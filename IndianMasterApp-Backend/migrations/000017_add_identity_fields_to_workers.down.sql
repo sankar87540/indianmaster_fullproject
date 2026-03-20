@@ -1,0 +1,4 @@
+ALTER TABLE workers
+    DROP COLUMN IF EXISTS full_name,
+    DROP COLUMN IF EXISTS phone,
+    DROP COLUMN IF EXISTS email;

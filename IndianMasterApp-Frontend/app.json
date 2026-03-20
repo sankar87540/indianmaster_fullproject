@@ -1,0 +1,59 @@
+{
+  "expo": {
+    "name": "Indian Master",
+    "slug": "indian-master-hiring",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/MAX.jpg",
+    "scheme": "indianmaster",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "updates": {
+      "enabled": false
+    },
+    "splash": {
+      "image": "./assets/images/MAX.jpg",
+      "resizeMode": "contain",
+      "backgroundColor": "#FFFFFF"
+    },
+    "ios": {
+      "supportsTablet": false
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/MAX.jpg",
+        "backgroundColor": "#FFFFFF"
+      },
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ],
+      "package": "com.anonymous.indianmasterhiring"
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single",
+      "favicon": "./assets/images/MAX.jpg"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "The app accesses your photos to let you upload your profile picture.",
+          "cameraPermission": "The app accesses your camera to let you take a profile picture."
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "ffaa2f6a-189a-4ad0-87e0-da637c663660"
+      }
+    },
+    "owner": "jhp07"
+  }
+}

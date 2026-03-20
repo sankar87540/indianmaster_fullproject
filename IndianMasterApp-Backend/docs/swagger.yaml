@@ -1,0 +1,2237 @@
+basePath: /api/v1
+definitions:
+  dto.APIResponse:
+    properties:
+      data: {}
+      error: {}
+      message:
+        type: string
+      meta:
+        description: Pagination metadata or other metadata
+      success:
+        type: boolean
+    type: object
+  dto.AdminStatsRequest:
+    properties:
+      endDate:
+        type: string
+      startDate:
+        type: string
+    type: object
+  dto.ApproveVerificationRequest:
+    properties:
+      entityId:
+        type: string
+      entityType:
+        enum:
+        - WORKER
+        - HIRER
+        - BUSINESS
+        type: string
+    required:
+    - entityId
+    - entityType
+    type: object
+  dto.AuditLogRequest:
+    properties:
+      actionType:
+        type: string
+      endDate:
+        type: string
+      limit:
+        type: integer
+      page:
+        type: integer
+      startDate:
+        type: string
+      userId:
+        type: string
+    type: object
+  dto.BusinessVerificationRequest:
+    properties:
+      action:
+        description: approve, reject
+        type: string
+      businessId:
+        type: string
+      reason:
+        type: string
+    type: object
+  dto.CreateApplicationRequest:
+    properties:
+      jobId:
+        type: string
+    required:
+    - jobId
+    type: object
+  dto.CreateChatThreadRequest:
+    properties:
+      hirerId:
+        type: string
+      jobId:
+        type: string
+      workerId:
+        type: string
+    required:
+    - hirerId
+    - jobId
+    - workerId
+    type: object
+  dto.CreateJobRequest:
+    properties:
+      addressText:
+        maxLength: 1000
+        type: string
+      benefits:
+        items:
+          type: string
+        type: array
+      businessId:
+        type: string
+      categories:
+        items:
+          type: string
+        type: array
+      city:
+        maxLength: 100
+        type: string
+      experienceMax:
+        minimum: 0
+        type: integer
+      experienceMin:
+        minimum: 0
+        type: integer
+      jobRole:
+        maxLength: 100
+        type: string
+      position:
+        maxLength: 200
+        type: string
+      preferredLanguages:
+        items:
+          type: string
+        type: array
+      roles:
+        items:
+          type: string
+        type: array
+      salaryMaxAmount:
+        minimum: 0
+        type: number
+      salaryMinAmount:
+        minimum: 0
+        type: number
+      state:
+        maxLength: 100
+        type: string
+      vacancies:
+        minimum: 1
+        type: integer
+      weeklyLeaves:
+        maximum: 7
+        minimum: 0
+        type: integer
+      workType:
+        maxLength: 50
+        type: string
+      workingHours:
+        maximum: 24
+        minimum: 0
+        type: integer
+    required:
+    - businessId
+    - city
+    - jobRole
+    - state
+    - vacancies
+    type: object
+  dto.CreateSubscriptionRequest:
+    properties:
+      amount:
+        minimum: 0
+        type: number
+      planName:
+        enum:
+        - Free
+        - Premium
+        - Enterprise
+        type: string
+    required:
+    - amount
+    - planName
+    type: object
+  dto.CreateWorkerProfileRequest:
+    properties:
+      availability:
+        items:
+          type: string
+        type: array
+      availabilityStatus:
+        type: string
+      businessTypes:
+        items:
+          type: string
+        type: array
+      expectedSalaryMax:
+        minimum: 0
+        type: integer
+      expectedSalaryMin:
+        minimum: 0
+        type: integer
+      experienceYears:
+        maximum: 80
+        minimum: 0
+        type: integer
+      jobCategories:
+        items:
+          type: string
+        type: array
+      jobRoles:
+        items:
+          type: string
+        type: array
+      language:
+        enum:
+        - en
+        - hi
+        - ta
+        type: string
+      languagesKnown:
+        items:
+          type: string
+        type: array
+      profilePhotoUrl:
+        type: string
+      selectedRoles:
+        items:
+          type: string
+        type: array
+      venuePreferences:
+        items:
+          type: string
+        type: array
+      workTypes:
+        items:
+          type: string
+        type: array
+    required:
+    - selectedRoles
+    type: object
+  dto.JobSearchRequest:
+    properties:
+      benefits:
+        type: string
+      businessType:
+        type: string
+      city:
+        type: string
+      experienceMax:
+        type: integer
+      experienceMin:
+        type: integer
+      jobRole:
+        type: string
+      language:
+        type: string
+      salaryMax:
+        type: number
+      salaryMin:
+        type: number
+      workType:
+        type: string
+    type: object
+  dto.RejectVerificationRequest:
+    properties:
+      entityId:
+        type: string
+      entityType:
+        enum:
+        - WORKER
+        - HIRER
+        - BUSINESS
+        type: string
+      reason:
+        maxLength: 1000
+        type: string
+    required:
+    - entityId
+    - entityType
+    - reason
+    type: object
+  dto.SendChatMessageRequest:
+    properties:
+      attachmentUrls:
+        items:
+          type: string
+        type: array
+      messageText:
+        maxLength: 5000
+        type: string
+      threadId:
+        type: string
+    required:
+    - messageText
+    - threadId
+    type: object
+  dto.SendOTPRequest:
+    properties:
+      phone:
+        maxLength: 20
+        minLength: 7
+        type: string
+    required:
+    - phone
+    type: object
+  dto.UpdateApplicationStatusRequest:
+    properties:
+      status:
+        enum:
+        - shortlisted
+        - rejected
+        - accepted
+        - withdrawn
+        type: string
+    required:
+    - status
+    type: object
+  dto.UpdateJobRequest:
+    properties:
+      addressText:
+        maxLength: 1000
+        type: string
+      benefits:
+        items:
+          type: string
+        type: array
+      categories:
+        items:
+          type: string
+        type: array
+      city:
+        maxLength: 100
+        type: string
+      experienceMax:
+        minimum: 0
+        type: integer
+      experienceMin:
+        minimum: 0
+        type: integer
+      position:
+        maxLength: 200
+        type: string
+      preferredLanguages:
+        items:
+          type: string
+        type: array
+      roles:
+        items:
+          type: string
+        type: array
+      salaryMaxAmount:
+        minimum: 0
+        type: number
+      salaryMinAmount:
+        minimum: 0
+        type: number
+      state:
+        maxLength: 100
+        type: string
+      status:
+        enum:
+        - DRAFT
+        - OPEN
+        - PAUSED
+        - CLOSED
+        - FILLED
+        type: string
+      vacancies:
+        minimum: 1
+        type: integer
+      weeklyLeaves:
+        maximum: 7
+        minimum: 0
+        type: integer
+      workType:
+        maxLength: 50
+        type: string
+      workingHours:
+        maximum: 24
+        minimum: 0
+        type: integer
+    type: object
+  dto.UpdateWorkerProfileRequest:
+    properties:
+      availability:
+        items:
+          type: string
+        type: array
+      availabilityStatus:
+        type: string
+      businessTypes:
+        items:
+          type: string
+        type: array
+      expectedSalaryMax:
+        minimum: 0
+        type: integer
+      expectedSalaryMin:
+        minimum: 0
+        type: integer
+      experienceYears:
+        maximum: 80
+        minimum: 0
+        type: integer
+      jobCategories:
+        items:
+          type: string
+        type: array
+      jobRoles:
+        items:
+          type: string
+        type: array
+      language:
+        enum:
+        - en
+        - hi
+        - ta
+        type: string
+      languagesKnown:
+        items:
+          type: string
+        type: array
+      profilePhotoUrl:
+        type: string
+      selectedRoles:
+        items:
+          type: string
+        type: array
+      venuePreferences:
+        items:
+          type: string
+        type: array
+      workTypes:
+        items:
+          type: string
+        type: array
+    type: object
+  dto.UserActivityRequest:
+    properties:
+      endDate:
+        type: string
+      limit:
+        type: integer
+      page:
+        type: integer
+      startDate:
+        type: string
+      userId:
+        type: string
+    type: object
+  dto.VerifyOTPRequest:
+    properties:
+      language:
+        enum:
+        - en
+        - hi
+        - ta
+        type: string
+      otp:
+        type: string
+      phone:
+        maxLength: 20
+        minLength: 7
+        type: string
+      requestId:
+        type: string
+      role:
+        enum:
+        - WORKER
+        - HIRER
+        - ADMIN
+        type: string
+    required:
+    - otp
+    - phone
+    - requestId
+    - role
+    type: object
+  dto.WorkerSearchRequest:
+    properties:
+      availability:
+        type: string
+      city:
+        type: string
+      experienceMax:
+        type: integer
+      experienceMin:
+        type: integer
+      language:
+        type: string
+      role:
+        type: string
+      salaryMax:
+        type: integer
+      salaryMin:
+        type: integer
+      venuePreference:
+        type: string
+      workType:
+        type: string
+    type: object
+  dto.WorkerVerificationRequest:
+    properties:
+      action:
+        description: approve, reject
+        type: string
+      reason:
+        type: string
+      workerId:
+        type: string
+    type: object
+info:
+  contact:
+    email: support@indianmaster.com
+    name: API Support
+  description: Backend APIs for Indian Master Application - A comprehensive platform
+    for job seekers and hirers in India
+  license:
+    name: Apache 2.0
+    url: http://www.apache.org/licenses/LICENSE-2.0.html
+  termsOfService: http://swagger.io/terms/
+  title: Indian Master API
+  version: "1.0"
+paths:
+  /admin/applications/{application_id}/status:
+    put:
+      consumes:
+      - application/json
+      description: Update the status of a job application. Notifies the worker of
+        the status change.
+      parameters:
+      - description: Application ID
+        in: path
+        name: application_id
+        required: true
+        type: string
+      - description: New status
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.UpdateApplicationStatusRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Application status updated successfully
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "400":
+          description: Invalid request body
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Failed to update application status
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Update Application Status
+      tags:
+      - Application
+  /admin/audit-logs:
+    get:
+      consumes:
+      - application/json
+      description: Retrieve paginated audit logs with optional filters
+      parameters:
+      - description: Audit log filters
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/dto.AuditLogRequest'
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Items per page (max 100)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Audit logs retrieved successfully
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "400":
+          description: Invalid request parameters
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Failed to retrieve audit logs
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      summary: Get Audit Logs
+      tags:
+      - Admin
+  /admin/business-verification/approve:
+    post:
+      consumes:
+      - application/json
+      description: Approve a business verification request
+      parameters:
+      - description: Business verification approval details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.BusinessVerificationRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Business verification approved successfully
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "400":
+          description: Invalid request body
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Failed to approve business verification
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      summary: Approve Business Verification
+      tags:
+      - Admin
+  /admin/business-verification/reject:
+    post:
+      consumes:
+      - application/json
+      description: Reject a business verification request
+      parameters:
+      - description: Business verification rejection details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.BusinessVerificationRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Business verification rejected successfully
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "400":
+          description: Invalid request body
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Failed to reject business verification
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      summary: Reject Business Verification
+      tags:
+      - Admin
+  /admin/stats:
+    post:
+      consumes:
+      - application/json
+      description: Retrieve comprehensive admin dashboard statistics
+      parameters:
+      - description: Date range filters
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/dto.AdminStatsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Admin statistics retrieved successfully
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "400":
+          description: Invalid request parameters
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Failed to retrieve admin statistics
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      summary: Get Admin Statistics
+      tags:
+      - Admin
+  /admin/system-health:
+    get:
+      consumes:
+      - application/json
+      description: Retrieve system health status
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: System health retrieved successfully
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Failed to retrieve system health
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      summary: Get System Health
+      tags:
+      - Admin
+  /admin/user-activities:
+    get:
+      consumes:
+      - application/json
+      description: Retrieve paginated user activities with optional filters
+      parameters:
+      - description: User activity filters
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/dto.UserActivityRequest'
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Items per page (max 100)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: User activities retrieved successfully
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "400":
+          description: Invalid request parameters
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Failed to retrieve user activities
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      summary: Get User Activities
+      tags:
+      - Admin
+  /admin/verification/approve:
+    post:
+      consumes:
+      - application/json
+      description: Approve a pending verification request. Notifies the worker/business
+        owner.
+      parameters:
+      - description: Verification approval details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.ApproveVerificationRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Verification approved successfully
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "400":
+          description: Invalid request body
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "403":
+          description: Forbidden - Admin role required
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Failed to approve verification
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Approve Verification
+      tags:
+      - Admin
+  /admin/verification/reject:
+    post:
+      consumes:
+      - application/json
+      description: Reject a pending verification request. Notifies the worker/business
+        owner with the reason.
+      parameters:
+      - description: Verification rejection details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.RejectVerificationRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Verification rejected successfully
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "400":
+          description: Invalid request body
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "403":
+          description: Forbidden - Admin role required
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Failed to reject verification
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Reject Verification
+      tags:
+      - Admin
+  /admin/worker-verification/approve:
+    post:
+      consumes:
+      - application/json
+      description: Approve a worker verification request
+      parameters:
+      - description: Worker verification approval details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.WorkerVerificationRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Worker verification approved successfully
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "400":
+          description: Invalid request body
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Failed to approve worker verification
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      summary: Approve Worker Verification
+      tags:
+      - Admin
+  /admin/worker-verification/reject:
+    post:
+      consumes:
+      - application/json
+      description: Reject a worker verification request
+      parameters:
+      - description: Worker verification rejection details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.WorkerVerificationRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Worker verification rejected successfully
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "400":
+          description: Invalid request body
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Failed to reject worker verification
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      summary: Reject Worker Verification
+      tags:
+      - Admin
+  /applications:
+    post:
+      consumes:
+      - application/json
+      description: Submit a job application. Notifies the hirer and invalidates recommendation
+        cache.
+      parameters:
+      - description: Application details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.CreateApplicationRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Application submitted successfully
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "400":
+          description: Invalid request body
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "409":
+          description: Already applied to this job
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Failed to apply for job
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Apply to Job
+      tags:
+      - Application
+  /applications/my-applications:
+    get:
+      consumes:
+      - application/json
+      description: Retrieve all applications submitted by the authenticated worker
+        with pagination
+      parameters:
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Items per page (max 100)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Applications retrieved successfully
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Failed to fetch applications
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Get My Applications
+      tags:
+      - Application
+  /auth/send-otp:
+    post:
+      consumes:
+      - application/json
+      description: Initiate the login/signup flow by sending a 6-digit OTP to the
+        provided mobile number.
+      parameters:
+      - description: Mobile number
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.SendOTPRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OTP sent successfully
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "400":
+          description: Invalid request body
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      summary: Send OTP to Mobile Number
+      tags:
+      - Authentication
+  /auth/verify-otp:
+    post:
+      consumes:
+      - application/json
+      description: Verify the 6-digit OTP. If the user doesn't exist, a new account
+        will be created with the provided role and language.
+      parameters:
+      - description: OTP verification details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.VerifyOTPRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Authentication successful
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "400":
+          description: Invalid request body or OTP
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      summary: Verify OTP and Login/Signup
+      tags:
+      - Authentication
+  /businesses:
+    get:
+      consumes:
+      - application/json
+      description: Retrieve paginated list of businesses filtered by business type
+      parameters:
+      - description: Business type to filter by
+        in: query
+        name: type
+        required: true
+        type: string
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Items per page (max 100)
+        in: query
+        name: limit
+        type: integer
+      - default: created_at
+        description: Sort field (e.g., created_at, business_name)
+        in: query
+        name: sort
+        type: string
+      - default: desc
+        description: Sort order (asc or desc)
+        enum:
+        - asc
+        - desc
+        in: query
+        name: order
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Businesses retrieved successfully with pagination metadata
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "400":
+          description: Invalid request parameters
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Failed to fetch businesses
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      summary: List Businesses by Type
+      tags:
+      - Business
+  /businesses/active:
+    get:
+      consumes:
+      - application/json
+      description: Retrieve paginated list of all active businesses
+      parameters:
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Items per page (max 100)
+        in: query
+        name: limit
+        type: integer
+      - default: created_at
+        description: Sort field (e.g., created_at, business_name)
+        in: query
+        name: sort
+        type: string
+      - default: desc
+        description: Sort order (asc or desc)
+        enum:
+        - asc
+        - desc
+        in: query
+        name: order
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Active businesses retrieved successfully with pagination metadata
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Failed to fetch active businesses
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      summary: List Active Businesses
+      tags:
+      - Business
+  /businesses/owner/{owner_id}:
+    get:
+      consumes:
+      - application/json
+      description: Retrieve paginated list of businesses owned by a specific user
+      parameters:
+      - description: Owner ID
+        in: path
+        name: owner_id
+        required: true
+        type: string
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Items per page (max 100)
+        in: query
+        name: limit
+        type: integer
+      - default: created_at
+        description: Sort field (e.g., created_at, business_name)
+        in: query
+        name: sort
+        type: string
+      - default: desc
+        description: Sort order (asc or desc)
+        enum:
+        - asc
+        - desc
+        in: query
+        name: order
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Businesses retrieved successfully with pagination metadata
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "400":
+          description: Invalid request parameters
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Failed to fetch businesses
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      summary: List Businesses by Owner
+      tags:
+      - Business
+  /chat/threads:
+    post:
+      consumes:
+      - application/json
+      description: Get an existing chat thread or create a new one between worker
+        and hirer
+      parameters:
+      - description: Chat thread details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.CreateChatThreadRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Chat thread retrieved or created successfully
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "400":
+          description: Invalid request body
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Failed to create chat thread
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Get or Create Chat Thread
+      tags:
+      - Chat
+  /chat/threads/{thread_id}/messages:
+    get:
+      consumes:
+      - application/json
+      description: Retrieve paginated messages from a chat thread
+      parameters:
+      - description: Chat thread ID
+        in: path
+        name: thread_id
+        required: true
+        type: string
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Items per page
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Messages retrieved successfully
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Failed to fetch messages
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Get Chat Messages
+      tags:
+      - Chat
+    post:
+      consumes:
+      - application/json
+      description: Send a message in a chat thread
+      parameters:
+      - description: Chat thread ID
+        in: path
+        name: thread_id
+        required: true
+        type: string
+      - description: Message details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.SendChatMessageRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Message sent successfully
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "400":
+          description: Invalid request body
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "401":
+          description: Unauthorized - user not found in context
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Failed to send message
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Send Chat Message
+      tags:
+      - Chat
+  /hirer/jobs:
+    post:
+      consumes:
+      - application/json
+      description: Create a new job posting. Invalidates jobs feed cache and notifies
+        matching workers.
+      parameters:
+      - description: Job details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.CreateJobRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Job created successfully
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "400":
+          description: Invalid request body
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Failed to create job
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Create Job Posting
+      tags:
+      - Job
+  /hirer/jobs/{job_id}:
+    put:
+      consumes:
+      - application/json
+      description: Update an existing job posting. Invalidates jobs feed, search,
+        and recommendation caches.
+      parameters:
+      - description: Job ID
+        in: path
+        name: job_id
+        required: true
+        type: string
+      - description: Updated job details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.UpdateJobRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Job updated successfully
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "400":
+          description: Invalid request body
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Failed to update job
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Update Job Posting
+      tags:
+      - Job
+  /jobs/{job_id}:
+    get:
+      consumes:
+      - application/json
+      description: Retrieve detailed information about a specific job
+      parameters:
+      - description: Job ID
+        in: path
+        name: job_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Job retrieved successfully
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "404":
+          description: Job not found
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Get Job Details
+      tags:
+      - Job
+  /jobs/feed:
+    get:
+      consumes:
+      - application/json
+      description: Retrieve a paginated feed of available jobs. Results are cached
+        in Redis for 5 minutes.
+      parameters:
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Items per page (max 100)
+        in: query
+        name: limit
+        type: integer
+      - description: Filter by city
+        in: query
+        name: city
+        type: string
+      - description: Filter by job role
+        in: query
+        name: job_role
+        type: string
+      - description: Filter by work type
+        in: query
+        name: work_type
+        type: string
+      - description: Minimum salary
+        in: query
+        name: salary_min
+        type: integer
+      - description: Maximum salary
+        in: query
+        name: salary_max
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Jobs feed retrieved successfully
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Failed to fetch jobs feed
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Get Jobs Feed (Cached)
+      tags:
+      - Job
+  /jobs/search:
+    post:
+      consumes:
+      - application/json
+      description: Perform advanced search on jobs with multiple filters
+      parameters:
+      - description: Search criteria
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.JobSearchRequest'
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Items per page (max 100)
+        in: query
+        name: limit
+        type: integer
+      - default: match_score
+        description: Sort field (e.g., match_score, salary)
+        in: query
+        name: sort
+        type: string
+      - default: desc
+        description: Sort order (asc or desc)
+        enum:
+        - asc
+        - desc
+        in: query
+        name: order
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Jobs found successfully
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "400":
+          description: Invalid request parameters
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Failed to search jobs
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      summary: Search Jobs
+      tags:
+      - Search
+  /notifications:
+    get:
+      consumes:
+      - application/json
+      description: Retrieve paginated notifications for the authenticated user (all,
+        read + unread)
+      parameters:
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Items per page (max 100)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Notifications retrieved successfully
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Failed to fetch notifications
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Get All Notifications
+      tags:
+      - Notification
+  /notifications/{id}/read:
+    patch:
+      consumes:
+      - application/json
+      description: Mark a specific notification as read for the authenticated user
+      parameters:
+      - description: Notification ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Notification marked as read
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "404":
+          description: Notification not found
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Failed to mark notification as read
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Mark Notification as Read
+      tags:
+      - Notification
+  /notifications/unread:
+    get:
+      consumes:
+      - application/json
+      description: Retrieve paginated unread notifications for the authenticated user
+      parameters:
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Items per page (max 100)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Unread notifications retrieved successfully
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Failed to fetch unread notifications
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Get Unread Notifications
+      tags:
+      - Notification
+  /notifications/unread/count:
+    get:
+      consumes:
+      - application/json
+      description: Get the count of unread notifications for the authenticated user
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Unread count retrieved successfully
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Failed to get unread count
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Get Unread Notification Count
+      tags:
+      - Notification
+  /search/jobs:
+    post:
+      consumes:
+      - application/json
+      description: Perform advanced search on jobs with multiple filters. Results
+        are cached in Redis for 5 minutes.
+      parameters:
+      - description: Search criteria
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.JobSearchRequest'
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Items per page (max 100)
+        in: query
+        name: limit
+        type: integer
+      - default: match_score
+        description: Sort field (e.g., match_score, salary)
+        in: query
+        name: sort
+        type: string
+      - default: desc
+        description: Sort order (asc or desc)
+        enum:
+        - asc
+        - desc
+        in: query
+        name: order
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Jobs found successfully
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "400":
+          description: Invalid request parameters
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Failed to search jobs
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Search Jobs (Cached)
+      tags:
+      - Search
+  /search/workers:
+    post:
+      consumes:
+      - application/json
+      description: Perform advanced search on workers with multiple filters. Results
+        are cached in Redis for 5 minutes.
+      parameters:
+      - description: Search criteria
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.WorkerSearchRequest'
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Items per page (max 100)
+        in: query
+        name: limit
+        type: integer
+      - default: match_score
+        description: Sort field (e.g., match_score, experience_years)
+        in: query
+        name: sort
+        type: string
+      - default: desc
+        description: Sort order (asc or desc)
+        enum:
+        - asc
+        - desc
+        in: query
+        name: order
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Workers found successfully
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "400":
+          description: Invalid request parameters
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Failed to search workers
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Search Workers (Cached)
+      tags:
+      - Search
+  /subscriptions:
+    post:
+      consumes:
+      - application/json
+      description: Create a new subscription plan for the authenticated user
+      parameters:
+      - description: Subscription details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.CreateSubscriptionRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Subscription created successfully
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "400":
+          description: Invalid request body
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "401":
+          description: Unauthorized - user not found in context
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Failed to create subscription
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Create Subscription
+      tags:
+      - Subscription
+  /subscriptions/active:
+    get:
+      consumes:
+      - application/json
+      description: Retrieve the active subscription for the authenticated user
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Active subscription retrieved successfully
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "401":
+          description: Unauthorized - user not found in context
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "402":
+          description: No active subscription found
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Get Active Subscription
+      tags:
+      - Subscription
+  /subscriptions/contact-limit:
+    get:
+      consumes:
+      - application/json
+      description: Check if the user has available contacts for their subscription
+        plan
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Contact limit retrieved successfully
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "401":
+          description: Unauthorized - user not found in context
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "402":
+          description: Active subscription required to check contact limits
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Failed to check contact limit
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Check Contact Limit
+      tags:
+      - Subscription
+  /users:
+    get:
+      consumes:
+      - application/json
+      description: Retrieve paginated list of users filtered by role
+      parameters:
+      - description: User role to filter by
+        in: query
+        name: role
+        required: true
+        type: string
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Items per page (max 100)
+        in: query
+        name: limit
+        type: integer
+      - default: created_at
+        description: Sort field (e.g., created_at, full_name)
+        in: query
+        name: sort
+        type: string
+      - default: desc
+        description: Sort order (asc or desc)
+        enum:
+        - asc
+        - desc
+        in: query
+        name: order
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Users retrieved successfully with pagination metadata
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "400":
+          description: Invalid request parameters
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Failed to fetch users
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      summary: List Users by Role
+      tags:
+      - User
+  /users/active:
+    get:
+      consumes:
+      - application/json
+      description: Retrieve paginated list of all active users
+      parameters:
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Items per page (max 100)
+        in: query
+        name: limit
+        type: integer
+      - default: created_at
+        description: Sort field (e.g., created_at, full_name)
+        in: query
+        name: sort
+        type: string
+      - default: desc
+        description: Sort order (asc or desc)
+        enum:
+        - asc
+        - desc
+        in: query
+        name: order
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Active users retrieved successfully with pagination metadata
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Failed to fetch active users
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      summary: List Active Users
+      tags:
+      - User
+  /worker/{worker_id}/recommended-jobs:
+    get:
+      consumes:
+      - application/json
+      description: Retrieve job recommendations for a worker based on matching criteria.
+        Results are cached in Redis for 5 minutes.
+      parameters:
+      - description: Worker ID
+        in: path
+        name: worker_id
+        required: true
+        type: string
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Items per page (max 100)
+        in: query
+        name: limit
+        type: integer
+      - default: match_score
+        description: Sort field (e.g., match_score, job_role)
+        in: query
+        name: sort
+        type: string
+      - default: desc
+        description: Sort order (asc or desc)
+        enum:
+        - asc
+        - desc
+        in: query
+        name: order
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Job recommendations retrieved successfully
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "400":
+          description: Invalid request parameters
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Failed to get recommended jobs
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Get Job Recommendations (Cached)
+      tags:
+      - Worker
+  /worker/profile:
+    get:
+      consumes:
+      - application/json
+      description: Retrieve the worker profile for the authenticated user (Worker
+        Only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Worker profile retrieved successfully
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "404":
+          description: Worker profile not found
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Get Worker Profile
+      tags:
+      - Worker
+    post:
+      consumes:
+      - application/json
+      description: Create a new worker profile for the authenticated user (Worker
+        Only)
+      parameters:
+      - description: Worker profile details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.CreateWorkerProfileRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Worker profile created successfully
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "400":
+          description: Invalid request body
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Failed to create worker profile
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Create Worker Profile
+      tags:
+      - Worker
+    put:
+      consumes:
+      - application/json
+      description: Update an existing worker profile. Invalidates Redis cache for
+        recommendations and search.
+      parameters:
+      - description: Updated worker profile details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.UpdateWorkerProfileRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Worker profile updated successfully
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "400":
+          description: Invalid request body
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Failed to update worker profile
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Update Worker Profile
+      tags:
+      - Worker
+  /worker/profile/verification:
+    get:
+      consumes:
+      - application/json
+      description: Retrieve the verification status for a worker (Worker Only)
+      parameters:
+      - description: Worker ID
+        in: path
+        name: worker_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Verification status retrieved successfully
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "404":
+          description: Verification status not found
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Get Verification Status
+      tags:
+      - Worker
+  /worker/profile/verification/{worker_id}:
+    get:
+      consumes:
+      - application/json
+      description: Retrieve the verification status for a worker (Worker Only)
+      parameters:
+      - description: Worker ID
+        in: path
+        name: worker_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Verification status retrieved successfully
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "403":
+          description: Forbidden - Worker role required
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "404":
+          description: Verification status not found
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Get Verification Status
+      tags:
+      - Worker
+  /workers/{worker_id}/recommended-jobs:
+    get:
+      consumes:
+      - application/json
+      description: Retrieve job recommendations for a worker based on matching criteria
+      parameters:
+      - description: Worker ID
+        in: path
+        name: worker_id
+        required: true
+        type: string
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Items per page (max 100)
+        in: query
+        name: limit
+        type: integer
+      - default: match_score
+        description: Sort field (e.g., match_score, job_role)
+        in: query
+        name: sort
+        type: string
+      - default: desc
+        description: Sort order (asc or desc)
+        enum:
+        - asc
+        - desc
+        in: query
+        name: order
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Job recommendations retrieved successfully
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "400":
+          description: Invalid request parameters
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Failed to get recommended jobs
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      summary: Get Job Recommendations
+      tags:
+      - Worker
+  /workers/search:
+    post:
+      consumes:
+      - application/json
+      description: Perform advanced search on workers with multiple filters
+      parameters:
+      - description: Search criteria
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.WorkerSearchRequest'
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Items per page (max 100)
+        in: query
+        name: limit
+        type: integer
+      - default: match_score
+        description: Sort field (e.g., match_score, experience_years)
+        in: query
+        name: sort
+        type: string
+      - default: desc
+        description: Sort order (asc or desc)
+        enum:
+        - asc
+        - desc
+        in: query
+        name: order
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Workers found successfully
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "400":
+          description: Invalid request parameters
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+        "500":
+          description: Failed to search workers
+          schema:
+            $ref: '#/definitions/dto.APIResponse'
+      summary: Search Workers
+      tags:
+      - Search
+schemes:
+- http
+- https
+swagger: "2.0"

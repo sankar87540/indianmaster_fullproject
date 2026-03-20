@@ -1,0 +1,30 @@
+# Snyk (https://snyk.io) policy file
+version: v1.25.0
+
+ignore:
+  SNYK-JS-INFLIGHT-6095116:
+    - '*':
+        reason: >
+          Cannot upgrade react-native past 0.81.x as it is pinned by Expo SDK 54.
+          Will revisit when Expo SDK 55 is released with a newer react-native version.
+        expires: 2026-09-01T00:00:00.000Z
+        created: 2026-03-04T00:00:00.000Z
+  SNYK-JS-MINIMATCH-15309438:
+    - '*':
+        reason: >
+          minimatch is a transitive dependency locked by Expo SDK 54.
+          No direct upgrade path available without breaking Expo compatibility.
+        expires: 2026-09-01T00:00:00.000Z
+        created: 2026-03-04T00:00:00.000Z
+  SNYK-JS-MINIMATCH-15353387:
+    - '*':
+        reason: Same as SNYK-JS-MINIMATCH-15309438
+        expires: 2026-09-01T00:00:00.000Z
+        created: 2026-03-04T00:00:00.000Z
+  SNYK-JS-MINIMATCH-15353389:
+    - '*':
+        reason: Same as SNYK-JS-MINIMATCH-15309438
+        expires: 2026-09-01T00:00:00.000Z
+        created: 2026-03-04T00:00:00.000Z
+
+patch: {}
