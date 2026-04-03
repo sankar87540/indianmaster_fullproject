@@ -1,0 +1,4 @@
+ALTER TABLE jobs
+    DROP COLUMN IF EXISTS state,
+    DROP COLUMN IF EXISTS latitude,
+    DROP COLUMN IF EXISTS longitude;

@@ -5,10 +5,52 @@ import (
 
 	"myapp/internal/dto"
 	"myapp/internal/middleware"
+	"myapp/internal/repositories"
 	"myapp/internal/services"
 
 	"github.com/gin-gonic/gin"
 )
+
+// ============================================================================
+// PUSH TOKEN HANDLER
+// ============================================================================
+
+// PushTokenHandler handles saving/updating the device push token for a user.
+type PushTokenHandler struct {
+	userRepo repositories.UserRepository
+}
+
+// NewPushTokenHandler creates a new PushTokenHandler.
+func NewPushTokenHandler(userRepo repositories.UserRepository) *PushTokenHandler {
+	return &PushTokenHandler{userRepo: userRepo}
+}
+
+type savePushTokenRequest struct {
+	Token string `json:"token" binding:"required"`
+}
+
+// SavePushToken stores/updates the Expo push token for the authenticated user.
+// PUT /api/v1/user/push-token
+func (h *PushTokenHandler) SavePushToken(c *gin.Context) {
+	userID, err := middleware.GetUserIDFromContext(c)
+	if err != nil {
+		dto.UnauthorizedResponse(c, "Unauthorized")
+		return
+	}
+
+	var req savePushTokenRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		dto.BadRequestResponse(c, "token is required", nil)
+		return
+	}
+
+	if err := h.userRepo.UpdatePushToken(c.Request.Context(), userID, req.Token); err != nil {
+		dto.InternalServerErrorResponse(c, "Failed to save push token", nil)
+		return
+	}
+
+	dto.OKResponse(c, "Push token saved", nil)
+}
 
 // ============================================================================
 // NOTIFICATION HANDLER V2
@@ -55,7 +97,7 @@ func (h *NotificationHandlerV2) GetNotifications(c *gin.Context) {
 
 	notifications, total, err := h.service.GetNotifications(c.Request.Context(), userID, page, limit)
 	if err != nil {
-		dto.InternalServerErrorResponse(c, "Failed to fetch notifications", gin.H{"error": err.Error()})
+		internalError(c, "Failed to fetch notifications", err)
 		return
 	}
 
@@ -93,7 +135,7 @@ func (h *NotificationHandlerV2) GetUnreadNotifications(c *gin.Context) {
 
 	notifications, total, err := h.service.GetUnreadNotifications(c.Request.Context(), userID, page, limit)
 	if err != nil {
-		dto.InternalServerErrorResponse(c, "Failed to fetch unread notifications", gin.H{"error": err.Error()})
+		internalError(c, "Failed to fetch unread notifications", err)
 		return
 	}
 
@@ -131,7 +173,7 @@ func (h *NotificationHandlerV2) MarkNotificationRead(c *gin.Context) {
 			dto.NotFoundResponse(c, "Notification not found")
 			return
 		}
-		dto.InternalServerErrorResponse(c, "Failed to mark notification as read", gin.H{"error": err.Error()})
+		internalError(c, "Failed to mark notification as read", err)
 		return
 	}
 
@@ -158,7 +200,7 @@ func (h *NotificationHandlerV2) GetUnreadCount(c *gin.Context) {
 
 	count, err := h.service.GetUnreadCount(c.Request.Context(), userID)
 	if err != nil {
-		dto.InternalServerErrorResponse(c, "Failed to get unread count", gin.H{"error": err.Error()})
+		internalError(c, "Failed to get unread count", err)
 		return
 	}
 

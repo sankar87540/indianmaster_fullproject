@@ -1,7 +1,14 @@
 package handlers
 
 import (
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+
 	"myapp/internal/dto"
+	"myapp/internal/middleware"
 	"myapp/internal/models"
 	"myapp/internal/services"
 
@@ -9,10 +16,10 @@ import (
 )
 
 type BusinessHandler struct {
-	businessService services.BusinessService
+	businessService *services.BusinessService
 }
 
-func NewBusinessHandler(businessService services.BusinessService) *BusinessHandler {
+func NewBusinessHandler(businessService *services.BusinessService) *BusinessHandler {
 	return &BusinessHandler{businessService: businessService}
 }
 
@@ -212,6 +219,131 @@ func (h *BusinessHandler) ListActiveBusinesses(c *gin.Context) {
 	}
 
 	dto.PaginatedSuccessResponse(c, "Active businesses retrieved successfully", businesses, total, pagination.Page, pagination.Limit)
+}
+
+// GetMyHirerProfile GET /api/v1/hirer/profile
+// Returns the authenticated hirer's business profile. 404 if not created yet.
+func (h *BusinessHandler) GetMyHirerProfile(c *gin.Context) {
+	ownerID, err := middleware.GetUserIDFromContext(c)
+	if err != nil {
+		dto.UnauthorizedResponse(c, "Authentication required")
+		return
+	}
+
+	resp, err := h.businessService.GetMyBusiness(c.Request.Context(), ownerID)
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+
+	dto.OKResponse(c, "Hirer profile retrieved successfully", resp)
+}
+
+// UpsertMyHirerProfile PUT /api/v1/hirer/profile
+// Creates or updates the authenticated hirer's business profile.
+func (h *BusinessHandler) UpsertMyHirerProfile(c *gin.Context) {
+	ownerID, err := middleware.GetUserIDFromContext(c)
+	if err != nil {
+		dto.UnauthorizedResponse(c, "Authentication required")
+		return
+	}
+
+	var req dto.HirerProfileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		dto.BadRequestResponse(c, "Invalid request body", gin.H{"error": err.Error()})
+		return
+	}
+
+	resp, err := h.businessService.UpsertMyBusiness(c.Request.Context(), ownerID, &req)
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+
+	dto.OKResponse(c, "Hirer profile saved successfully", resp)
+}
+
+// UploadLogo POST /api/v1/hirer/profile/logo
+// Uploads a business logo (JPEG/PNG/WebP, max 5 MB) and stores the URL in businesses.logo_url.
+func (h *BusinessHandler) UploadLogo(c *gin.Context) {
+	ownerID, err := middleware.GetUserIDFromContext(c)
+	if err != nil {
+		dto.UnauthorizedResponse(c, "Authentication required")
+		return
+	}
+
+	file, header, err := c.Request.FormFile("logo")
+	if err != nil {
+		dto.BadRequestResponse(c, "Missing 'logo' field in request", gin.H{"error": err.Error()})
+		return
+	}
+	defer file.Close()
+
+	const maxSize = 5 << 20
+	if header.Size > maxSize {
+		dto.BadRequestResponse(c, "File too large; maximum allowed size is 5 MB", nil)
+		return
+	}
+
+	buf := make([]byte, 512)
+	n, err := file.Read(buf)
+	if err != nil && err != io.EOF {
+		dto.InternalServerErrorResponse(c, "Failed to read uploaded file", nil)
+		return
+	}
+	contentType := http.DetectContentType(buf[:n])
+
+	var ext string
+	switch contentType {
+	case "image/jpeg":
+		ext = ".jpg"
+	case "image/png":
+		ext = ".png"
+	case "image/webp":
+		ext = ".webp"
+	default:
+		dto.BadRequestResponse(c, "Unsupported file type; use JPEG, PNG, or WebP", gin.H{"detected": contentType})
+		return
+	}
+
+	if seeker, ok := file.(io.Seeker); ok {
+		if _, err := seeker.Seek(0, io.SeekStart); err != nil {
+			dto.InternalServerErrorResponse(c, "Failed to process uploaded file", nil)
+			return
+		}
+	}
+
+	dir := filepath.Join("uploads", "businesses", ownerID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		dto.InternalServerErrorResponse(c, "Failed to create upload directory", nil)
+		return
+	}
+
+	destPath := filepath.Join(dir, "logo"+ext)
+	dest, err := os.Create(destPath)
+	if err != nil {
+		dto.InternalServerErrorResponse(c, "Failed to create destination file", nil)
+		return
+	}
+	defer dest.Close()
+
+	if _, err := io.Copy(dest, file); err != nil {
+		dto.InternalServerErrorResponse(c, "Failed to write uploaded file", nil)
+		return
+	}
+
+	scheme := "http"
+	if c.Request.TLS != nil {
+		scheme = "https"
+	}
+	logoURL := fmt.Sprintf("%s://%s/uploads/businesses/%s/logo%s", scheme, c.Request.Host, ownerID, ext)
+
+	if err := h.businessService.UpdateMyBusinessLogo(c.Request.Context(), ownerID, logoURL); err != nil {
+		internalError(c, "Failed to update logo URL", err)
+		return
+	}
+
+	dto.OKResponse(c, "Logo uploaded successfully", gin.H{"url": logoURL})
 }
 
 // GetBusinessesByOwner GET /businesses/owner/:owner_id

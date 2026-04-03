@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"log"
 	"time"
 
 	"myapp/internal/dto"
@@ -19,11 +20,40 @@ import (
 // and a CreateNotification helper used by other services.
 type NotificationServiceV2 struct {
 	notificationRepo repositories.NotificationRepository
+	userRepo         repositories.UserRepository
+	pushSvc          *ExpoPushService
 }
 
 // NewNotificationServiceV2 creates a new NotificationServiceV2
-func NewNotificationServiceV2(notificationRepo repositories.NotificationRepository) *NotificationServiceV2 {
-	return &NotificationServiceV2{notificationRepo: notificationRepo}
+func NewNotificationServiceV2(
+	notificationRepo repositories.NotificationRepository,
+	userRepo repositories.UserRepository,
+	pushSvc *ExpoPushService,
+) *NotificationServiceV2 {
+	return &NotificationServiceV2{
+		notificationRepo: notificationRepo,
+		userRepo:         userRepo,
+		pushSvc:          pushSvc,
+	}
+}
+
+// sendPushAsync looks up the user's push token and fires a push notification
+// in a goroutine so it never blocks the main request path.
+func (s *NotificationServiceV2) sendPushAsync(userID, title, message string) {
+	if s.pushSvc == nil || s.userRepo == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		token, err := s.userRepo.GetPushToken(ctx, userID)
+		if err != nil || token == "" {
+			return
+		}
+		if err := s.pushSvc.Send(ctx, token, title, message); err != nil {
+			log.Printf("[push] failed to send to user %s: %v", userID, err)
+		}
+	}()
 }
 
 // ============================================================================
@@ -43,21 +73,58 @@ func (s *NotificationServiceV2) CreateNotification(
 	ctx context.Context,
 	userID, title, message, notifType, entityID string,
 ) error {
+	now := time.Now()
 	notif := &models.Notification{
-		ID:        uuid.New().String(),
-		UserID:    userID,
-		Title:     title,
-		Message:   message,
-		Type:      notifType,
-		IsRead:    false,
-		CreatedAt: time.Now(),
+		ID:          uuid.New().String(),
+		UserID:      userID,
+		Title:       title,
+		Message:     message,
+		Type:        notifType,
+		IsRead:      false,
+		UnreadCount: 1,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 
 	if entityID != "" {
 		notif.RelatedEntityID = &entityID
 	}
 
-	return s.notificationRepo.CreateNotification(ctx, notif)
+	if err := s.notificationRepo.CreateNotification(ctx, notif); err != nil {
+		return err
+	}
+	s.sendPushAsync(userID, title, message)
+	return nil
+}
+
+// UpsertChatNotification creates or updates a CHAT_MESSAGE notification for a
+// specific chat thread. If a notification already exists for this
+// (receiverID, threadID) pair it is updated in place — the title reflects the
+// latest sender name, the message shows the latest preview, and unread_count is
+// incremented. This gives WhatsApp-style grouping: one notification per thread,
+// not one per message.
+func (s *NotificationServiceV2) UpsertChatNotification(
+	ctx context.Context,
+	receiverID, threadID, senderName, messagePreview string,
+) error {
+	threadIDCopy := threadID
+	notif := &models.Notification{
+		ID:              uuid.New().String(),
+		UserID:          receiverID,
+		Title:           "New message from " + senderName,
+		Message:         messagePreview,
+		Type:            models.NotificationTypeChatMessage,
+		RelatedEntityID: &threadIDCopy,
+		IsRead:          false,
+		UnreadCount:     1,
+		CreatedAt:       time.Now(),
+		UpdatedAt:       time.Now(),
+	}
+	if err := s.notificationRepo.UpsertChatNotification(ctx, notif); err != nil {
+		return err
+	}
+	s.sendPushAsync(receiverID, notif.Title, messagePreview)
+	return nil
 }
 
 // ============================================================================
@@ -131,6 +198,8 @@ func toNotificationResponse(n *models.Notification) dto.NotificationResponse {
 		RelatedEntityType: n.RelatedEntityType,
 		RelatedEntityID:   n.RelatedEntityID,
 		IsRead:            n.IsRead,
+		UnreadCount:       n.UnreadCount,
+		UpdatedAt:         n.UpdatedAt,
 		CreatedAt:         n.CreatedAt,
 	}
 }

@@ -47,7 +47,11 @@ export interface RawWorkerProfile {
     // Verification (profile-details)
     aadhaarNumber?: string;
 
-    // App metadata (not sent to backend)
+    // GPS coordinates — captured silently via device location on profile save
+    liveLatitude?: number;
+    liveLongitude?: number;
+
+    // Identity fields sent to both worker profile and user profile endpoints
     mobileNumber?: string;
     email?: string;
     completionPercentage?: string | number;
@@ -98,6 +102,11 @@ export function parseAge(raw: string | number | undefined): number {
  */
 export function mapToWorkerProfilePayload(raw: RawWorkerProfile): WorkerProfilePayload {
     const payload: WorkerProfilePayload = {};
+
+    // ── Identity (fullName, mobileNumber, email) ─────────────────────────────
+    if (raw.fullName && raw.fullName.trim()) payload.fullName = raw.fullName.trim();
+    if (raw.mobileNumber && raw.mobileNumber.trim()) payload.mobileNumber = raw.mobileNumber.trim();
+    if (raw.email && raw.email.trim()) payload.email = raw.email.trim();
 
     // ── Personal ────────────────────────────────────────────────────────────
     if (raw.age !== undefined && raw.age !== '') {
@@ -167,6 +176,10 @@ export function mapToWorkerProfilePayload(raw: RawWorkerProfile): WorkerProfileP
     // ── App / language ───────────────────────────────────────────────────────
     if (raw.profilePhotoUrl) payload.profilePhotoUrl = raw.profilePhotoUrl;
     if (raw.language) payload.language = raw.language;
+
+    // ── GPS coordinates ───────────────────────────────────────────────────────
+    if (raw.liveLatitude != null) payload.liveLatitude = raw.liveLatitude;
+    if (raw.liveLongitude != null) payload.liveLongitude = raw.liveLongitude;
 
     return payload;
 }

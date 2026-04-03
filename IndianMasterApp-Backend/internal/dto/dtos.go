@@ -130,16 +130,33 @@ type WorkerProfileResponse struct {
 	College              string    `json:"college"`
 	AadhaarNumber        string    `json:"aadhaarNumber"`
 	Language             string    `json:"language"`
-	IsVerified           bool      `json:"isVerified"`
-	VerificationStatus   string    `json:"verificationStatus"`
+	IsVerified           bool     `json:"isVerified"`
+	VerificationStatus   string   `json:"verificationStatus"`
+	LiveLatitude         *float64 `json:"liveLatitude"`
+	LiveLongitude        *float64 `json:"liveLongitude"`
 	CreatedAt            time.Time `json:"createdAt"`
 	UpdatedAt            time.Time `json:"updatedAt"`
+}
+
+// WorkerUnlockStatusResponse is returned by GET /hirer/workers/:id/unlock-status
+type WorkerUnlockStatusResponse struct {
+	WorkerID   string `json:"workerId"`
+	IsUnlocked bool   `json:"isUnlocked"`
+}
+
+// WorkerContactResponse is returned by POST /hirer/workers/:id/unlock
+// Only returned to hirers who have unlocked the worker.
+type WorkerContactResponse struct {
+	WorkerID    string `json:"workerId"`
+	Phone       string `json:"phone"`
+	WhatsAppURL string `json:"whatsappUrl"`
+	IsUnlocked  bool   `json:"isUnlocked"`
 }
 
 // CreateWorkerProfileRequest create worker profile
 type CreateWorkerProfileRequest struct {
 	FullName           string   `json:"fullName" binding:"omitempty,max=255"`
-	Phone              string   `json:"phone" binding:"omitempty,min=7,max=20"`
+	Phone              string   `json:"mobileNumber" binding:"omitempty,min=7,max=20"`
 	Email              string   `json:"email" binding:"omitempty,email,max=254"`
 	SelectedRoles      []string `json:"selectedRoles" binding:"omitempty"`
 	ExperienceYears    int      `json:"experienceYears" binding:"omitempty,min=0,max=80"`
@@ -153,7 +170,7 @@ type CreateWorkerProfileRequest struct {
 	AvailabilityStatus string   `json:"availabilityStatus" binding:"omitempty"`
 	ExpectedSalaryMin  int      `json:"expectedSalaryMin" binding:"omitempty,min=0"`
 	ExpectedSalaryMax  int      `json:"expectedSalaryMax" binding:"omitempty,min=0"`
-	ProfilePhotoURL    string   `json:"profilePhotoUrl" binding:"omitempty,url"`
+	ProfilePhotoURL    string   `json:"profilePhotoUrl" binding:"omitempty"`
 	Language           string   `json:"language" binding:"omitempty,oneof=en hi ta"`
 	Age                int      `json:"age" binding:"omitempty,min=0,max=120"`
 	Gender             string   `json:"gender" binding:"omitempty,max=20"`
@@ -165,12 +182,14 @@ type CreateWorkerProfileRequest struct {
 	Degree             string   `json:"degree" binding:"omitempty,max=200"`
 	College            string   `json:"college" binding:"omitempty,max=255"`
 	AadhaarNumber      string   `json:"aadhaarNumber" binding:"omitempty,len=12"`
+	LiveLatitude       *float64 `json:"liveLatitude" binding:"omitempty"`
+	LiveLongitude      *float64 `json:"liveLongitude" binding:"omitempty"`
 }
 
 // UpdateWorkerProfileRequest update worker profile
 type UpdateWorkerProfileRequest struct {
 	FullName           string   `json:"fullName" binding:"omitempty,max=255"`
-	Phone              string   `json:"phone" binding:"omitempty,min=7,max=20"`
+	Phone              string   `json:"mobileNumber" binding:"omitempty,min=7,max=20"`
 	Email              string   `json:"email" binding:"omitempty,email,max=254"`
 	SelectedRoles      []string `json:"selectedRoles" binding:"omitempty"`
 	ExperienceYears    int      `json:"experienceYears" binding:"omitempty,min=0,max=80"`
@@ -184,7 +203,7 @@ type UpdateWorkerProfileRequest struct {
 	AvailabilityStatus string   `json:"availabilityStatus" binding:"omitempty"`
 	ExpectedSalaryMin  int      `json:"expectedSalaryMin" binding:"omitempty,min=0"`
 	ExpectedSalaryMax  int      `json:"expectedSalaryMax" binding:"omitempty,min=0"`
-	ProfilePhotoURL    string   `json:"profilePhotoUrl" binding:"omitempty,url"`
+	ProfilePhotoURL    string   `json:"profilePhotoUrl" binding:"omitempty"`
 	Language           string   `json:"language" binding:"omitempty,oneof=en hi ta"`
 	Age                int      `json:"age" binding:"omitempty,min=0,max=120"`
 	Gender             string   `json:"gender" binding:"omitempty,max=20"`
@@ -196,6 +215,8 @@ type UpdateWorkerProfileRequest struct {
 	Degree             string   `json:"degree" binding:"omitempty,max=200"`
 	College            string   `json:"college" binding:"omitempty,max=255"`
 	AadhaarNumber      string   `json:"aadhaarNumber" binding:"omitempty,len=12"`
+	LiveLatitude       *float64 `json:"liveLatitude" binding:"omitempty"`
+	LiveLongitude      *float64 `json:"liveLongitude" binding:"omitempty"`
 }
 
 // ================ JOB DTOs ================
@@ -216,21 +237,32 @@ type JobResponse struct {
 	ExperienceMin      int       `json:"experienceMin"`
 	ExperienceMax      *int      `json:"experienceMax"`
 	Vacancies          int       `json:"vacancies"`
+	GenderPreference   string    `json:"genderPreference"`
+	MaleVacancies      int       `json:"maleVacancies"`
+	FemaleVacancies    int       `json:"femaleVacancies"`
+	OthersVacancies    int       `json:"othersVacancies"`
 	WorkingHours       *int      `json:"workingHours"`
 	WeeklyLeaves       int       `json:"weeklyLeaves"`
 	Benefits           []string  `json:"benefits"`
 	WorkType           string    `json:"workType"`
 	City               string    `json:"city"`
 	State              string    `json:"state"`
+	Locality           string    `json:"locality"`
 	AddressText        string    `json:"addressText"`
+	Latitude           *float64  `json:"latitude"`
+	Longitude          *float64  `json:"longitude"`
+	Description        string    `json:"description"`
+	Availability       []string  `json:"availability"`
 	Status             string    `json:"status"`
 	CreatedAt          time.Time `json:"createdAt"`
 }
 
 // CreateJobRequest create new job
+// BusinessID is optional — if omitted the service resolves it from the hirer's JWT identity.
+// JobRole is optional — if omitted the service derives it from the first element of Roles.
 type CreateJobRequest struct {
-	BusinessID         string   `json:"businessId" binding:"required,uuid"`
-	JobRole            string   `json:"jobRole" binding:"required,max=100"`
+	BusinessID         string   `json:"businessId" binding:"omitempty,uuid"`
+	JobRole            string   `json:"jobRole" binding:"omitempty,max=100"`
 	Position           string   `json:"position" binding:"omitempty,max=200"`
 	Categories         []string `json:"categories" binding:"omitempty"`
 	Roles              []string `json:"roles" binding:"omitempty"`
@@ -239,14 +271,21 @@ type CreateJobRequest struct {
 	SalaryMaxAmount    float64  `json:"salaryMaxAmount" binding:"omitempty,min=0"`
 	ExperienceMin      int      `json:"experienceMin" binding:"omitempty,min=0"`
 	ExperienceMax      *int     `json:"experienceMax" binding:"omitempty,min=0"`
-	Vacancies          int      `json:"vacancies" binding:"required,min=1"`
+	Vacancies          int      `json:"vacancies" binding:"omitempty,min=0"`
+	GenderPreference   string   `json:"genderPreference" binding:"omitempty,oneof=Male Female Others All"`
+	MaleVacancies      int      `json:"maleVacancies" binding:"omitempty,min=0"`
+	FemaleVacancies    int      `json:"femaleVacancies" binding:"omitempty,min=0"`
+	OthersVacancies    int      `json:"othersVacancies" binding:"omitempty,min=0"`
 	WorkingHours       *int     `json:"workingHours" binding:"omitempty,min=0,max=24"`
 	WeeklyLeaves       int      `json:"weeklyLeaves" binding:"omitempty,min=0,max=7"`
 	Benefits           []string `json:"benefits" binding:"omitempty"`
 	WorkType           string   `json:"workType" binding:"omitempty,max=50"`
 	AddressText        string   `json:"addressText" binding:"omitempty,max=1000"`
-	City               string   `json:"city" binding:"required,max=100"`
-	State              string   `json:"state" binding:"required,max=100"`
+	Locality           string   `json:"locality" binding:"omitempty,max=255"`
+	City               string   `json:"city" binding:"omitempty,max=100"`
+	State              string   `json:"state" binding:"omitempty,max=100"`
+	Description        string   `json:"description" binding:"omitempty"`
+	Availability       []string `json:"availability" binding:"omitempty"`
 }
 
 // UpdateJobRequest update job details
@@ -259,15 +298,22 @@ type UpdateJobRequest struct {
 	SalaryMaxAmount    float64  `json:"salaryMaxAmount" binding:"omitempty,min=0"`
 	ExperienceMin      int      `json:"experienceMin" binding:"omitempty,min=0"`
 	ExperienceMax      *int     `json:"experienceMax" binding:"omitempty,min=0"`
-	Vacancies          int      `json:"vacancies" binding:"omitempty,min=1"`
+	Vacancies          int      `json:"vacancies" binding:"omitempty,min=0"`
+	GenderPreference   string   `json:"genderPreference" binding:"omitempty,oneof=Male Female Others All"`
+	MaleVacancies      int      `json:"maleVacancies" binding:"omitempty,min=0"`
+	FemaleVacancies    int      `json:"femaleVacancies" binding:"omitempty,min=0"`
+	OthersVacancies    int      `json:"othersVacancies" binding:"omitempty,min=0"`
 	WorkingHours       *int     `json:"workingHours" binding:"omitempty,min=0,max=24"`
 	WeeklyLeaves       int      `json:"weeklyLeaves" binding:"omitempty,min=0,max=7"`
 	Benefits           []string `json:"benefits" binding:"omitempty"`
 	Status             string   `json:"status" binding:"omitempty,oneof=DRAFT OPEN PAUSED CLOSED FILLED"`
 	WorkType           string   `json:"workType" binding:"omitempty,max=50"`
 	AddressText        string   `json:"addressText" binding:"omitempty,max=1000"`
+	Locality           string   `json:"locality" binding:"omitempty,max=255"`
 	City               string   `json:"city" binding:"omitempty,max=100"`
 	State              string   `json:"state" binding:"omitempty,max=100"`
+	Description        string   `json:"description" binding:"omitempty"`
+	Availability       []string `json:"availability" binding:"omitempty"`
 }
 
 // ================ APPLICATION DTOs ================
@@ -292,13 +338,31 @@ type UpdateApplicationStatusRequest struct {
 	Status string `json:"status" binding:"required,oneof=shortlisted rejected accepted withdrawn"`
 }
 
+// ApplicantDetail enriched applicant view returned to hirers for a specific job
+type ApplicantDetail struct {
+	ApplicationID     string    `json:"applicationId"`
+	Status            string    `json:"status"`
+	AppliedAt         time.Time `json:"appliedAt"`
+	WorkerUserID      string    `json:"workerUserId"`
+	FullName          string    `json:"fullName"`
+	Phone             string    `json:"phone"`
+	Email             string    `json:"email"`
+	City              string    `json:"city"`
+	State             string    `json:"state"`
+	ExpectedSalaryMin int       `json:"expectedSalaryMin"`
+	ExpectedSalaryMax int       `json:"expectedSalaryMax"`
+	ProfilePhotoURL   string    `json:"profilePhotoUrl,omitempty"`
+}
+
 // ================ CHAT DTOs ================
 
-// CreateChatThreadRequest create new chat thread
+// CreateChatThreadRequest open or retrieve a conversation between the caller and another user.
+// The caller's identity (worker or hirer) is derived from their JWT token server-side.
+// OtherUserID is the UUID of the other party.
 type CreateChatThreadRequest struct {
-	WorkerID string `json:"workerId" binding:"required,uuid"`
-	HirerID  string `json:"hirerId" binding:"required,uuid"`
-	JobID    string `json:"jobId" binding:"required,uuid"`
+	OtherUserID string `json:"otherUserId" binding:"required,uuid"`
+	// JobID is optional context for the conversation
+	JobID string `json:"jobId" binding:"omitempty,uuid"`
 }
 
 // ChatThreadResponse chat thread view
@@ -310,7 +374,10 @@ type ChatThreadResponse struct {
 	LastMessageAt      *time.Time `json:"lastMessageAt"`
 	IsArchived         bool       `json:"isArchived"`
 	UnreadCount        int        `json:"unreadCount"`
+	// HirerName: other party's display name as seen by the requester.
+	// For a worker, this is the hirer/business name. For a hirer, it is the worker's name.
 	HirerName          string     `json:"hirerName"`
+	WorkerName         string     `json:"workerName"`
 	LastMessagePreview string     `json:"lastMessagePreview"`
 	CreatedAt          time.Time  `json:"createdAt"`
 }
@@ -324,14 +391,26 @@ type ChatMessageResponse struct {
 	AttachmentURLs []string   `json:"attachmentUrls"`
 	IsRead         bool       `json:"isRead"`
 	ReadAt         *time.Time `json:"readAt"`
-	CreatedAt      time.Time  `json:"createdAt"`
+	DeliveredAt    *time.Time `json:"deliveredAt"`
+	// Reply context — null when this message is not a reply.
+	ReplyToMessageID *string    `json:"replyToMessageId"`
+	ReplyToText      *string    `json:"replyToText"`
+	ReplyToSenderID  *string    `json:"replyToSenderId"`
+	CreatedAt        time.Time  `json:"createdAt"`
 }
 
-// SendChatMessageRequest send new message
+// SendChatMessageRequest send new message (threadId comes from URL path param)
 type SendChatMessageRequest struct {
-	ThreadID       string   `json:"threadId" binding:"required,uuid"`
-	MessageText    string   `json:"messageText" binding:"required,max=5000"`
-	AttachmentURLs []string `json:"attachmentUrls" binding:"omitempty"`
+	MessageText      string   `json:"messageText" binding:"required,max=5000"`
+	AttachmentURLs   []string `json:"attachmentUrls" binding:"omitempty"`
+	// ReplyToMessageID: optional; when set the message is a quoted reply.
+	ReplyToMessageID string   `json:"replyToMessageId" binding:"omitempty,uuid"`
+}
+
+// PresenceResponse online/offline status of the other chat participant
+type PresenceResponse struct {
+	IsOnline bool       `json:"isOnline"`
+	LastSeen *time.Time `json:"lastSeen"`
 }
 
 // ================ SUBSCRIPTION DTOs ================
@@ -419,6 +498,47 @@ type CreateBusinessRequest struct {
 	Language     string  `json:"language" binding:"omitempty,oneof=en hi ta"`
 }
 
+// HirerProfileRequest is the upsert payload from the restaurant-setup screen.
+// OwnerID is taken from the JWT — not from the request body.
+type HirerProfileRequest struct {
+	BusinessName  string   `json:"businessName" binding:"required"`
+	OwnerName     string   `json:"ownerName" binding:"required"`
+	ContactRole   string   `json:"contactRole" binding:"required"`
+	BusinessTypes []string `json:"businessTypes" binding:"required,min=1"`
+	Email         string   `json:"email" binding:"omitempty,email"`
+	MobileNumber  string   `json:"mobileNumber" binding:"omitempty"`
+	FSSAILicense  string   `json:"fssaiLicense" binding:"omitempty"`
+	GSTNumber     string   `json:"gstNumber" binding:"omitempty"`
+	EmployeeCount int      `json:"employeeCount" binding:"omitempty,min=0"`
+	City          string   `json:"city" binding:"omitempty,max=100"`
+	State         string   `json:"state" binding:"omitempty,max=100"`
+	Latitude      float64  `json:"latitude" binding:"omitempty"`
+	Longitude     float64  `json:"longitude" binding:"omitempty"`
+}
+
+// HirerProfileResponse is returned by GET/PUT /api/v1/hirer/profile.
+type HirerProfileResponse struct {
+	ID            string    `json:"id"`
+	OwnerID       string    `json:"ownerId"`
+	BusinessName  string    `json:"businessName"`
+	OwnerName     string    `json:"ownerName"`
+	ContactRole   string    `json:"contactRole"`
+	BusinessTypes []string  `json:"businessTypes"`
+	Email         string    `json:"email"`
+	MobileNumber  string    `json:"mobileNumber"`
+	FSSAILicense  string    `json:"fssaiLicense"`
+	GSTNumber     string    `json:"gstNumber"`
+	EmployeeCount int       `json:"employeeCount"`
+	LogoURL       string    `json:"logoUrl"`
+	City          string    `json:"city"`
+	State         string    `json:"state"`
+	Latitude      float64   `json:"latitude"`
+	Longitude     float64   `json:"longitude"`
+	IsVerified    bool      `json:"isVerified"`
+	CreatedAt     time.Time `json:"createdAt"`
+	UpdatedAt     time.Time `json:"updatedAt"`
+}
+
 // ================ NOTIFICATION DTOs ================
 
 // NotificationResponse notification view
@@ -430,6 +550,8 @@ type NotificationResponse struct {
 	RelatedEntityType *string   `json:"relatedEntityType"`
 	RelatedEntityID   *string   `json:"relatedEntityId"`
 	IsRead            bool      `json:"isRead"`
+	UnreadCount       int       `json:"unreadCount"`
+	UpdatedAt         time.Time `json:"updatedAt"`
 	CreatedAt         time.Time `json:"createdAt"`
 }
 

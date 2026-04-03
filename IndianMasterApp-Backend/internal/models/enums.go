@@ -59,13 +59,23 @@ const (
 
 // ================ NOTIFICATION TYPES ================
 const (
-	NotificationTypeNewApplication     = "NEW_APPLICATION"
-	NotificationTypeAppStatusChange    = "APP_STATUS_CHANGE"
-	NotificationTypeJobMatch           = "JOB_MATCH"
+	// Shared / common
 	NotificationTypeChatMessage        = "CHAT_MESSAGE"
-	NotificationTypeSubscriptionExpiry = "SUBSCRIPTION_EXPIRY"
 	NotificationTypeKYCApproved        = "KYC_APPROVED"
 	NotificationTypeKYCRejected        = "KYC_REJECTED"
+	NotificationTypeSubscriptionExpiry = "SUBSCRIPTION_EXPIRY"
+
+	// Worker-facing
+	NotificationTypeNewApplication  = "NEW_APPLICATION"  // hirer receives this
+	NotificationTypeAppStatusChange = "APP_STATUS_CHANGE" // worker receives this (shortlisted/rejected/accepted)
+	NotificationTypeJobMatch        = "JOB_MATCH"         // worker receives: new relevant job posted nearby
+	NotificationTypeProfileViewed   = "PROFILE_VIEWED"    // worker receives: hirer viewed/unlocked profile
+	NotificationTypeInterviewScheduled = "INTERVIEW_SCHEDULED" // worker receives: interview scheduled
+
+	// Hirer-facing
+	NotificationTypeWorkerMatched  = "WORKER_MATCHED"  // hirer receives: new matching worker available
+	NotificationTypePaymentSuccess = "PAYMENT_SUCCESS" // hirer receives: subscription/payment confirmed
+	NotificationTypePlanExpiry     = "PLAN_EXPIRY"     // hirer receives: plan expiry reminder
 )
 
 // ================ AUDIT ACTIONS ================

@@ -49,7 +49,7 @@ func (h *SearchHandlerV2) SearchWorkers(c *gin.Context) {
 
 	results, total, err := h.searchService.SearchWorkers(c.Request.Context(), &req, pagination)
 	if err != nil {
-		dto.InternalServerErrorResponse(c, "Failed to search workers", err.Error())
+		internalError(c, "Failed to search workers", err)
 		return
 	}
 
@@ -84,7 +84,7 @@ func (h *SearchHandlerV2) SearchJobs(c *gin.Context) {
 
 	results, total, err := h.searchService.SearchJobs(c.Request.Context(), &req, pagination)
 	if err != nil {
-		dto.InternalServerErrorResponse(c, "Failed to search jobs", err.Error())
+		internalError(c, "Failed to search jobs", err)
 		return
 	}
 

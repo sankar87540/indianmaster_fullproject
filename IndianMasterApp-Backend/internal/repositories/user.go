@@ -244,8 +244,15 @@ func (r *userRepository) Update(ctx context.Context, user *models.User) error {
 		RETURNING updated_at
 	`
 
+	// Pass nil for empty email to satisfy the chk_users_email_not_empty constraint
+	// (DB allows NULL but not empty string "")
+	var emailArg interface{}
+	if user.Email != "" {
+		emailArg = user.Email
+	}
+
 	err := r.executor.QueryRowContext(ctx, query,
-		user.Phone, user.FullName, user.Role, user.Language, user.Email, user.IsActive, user.ID,
+		user.Phone, user.FullName, user.Role, user.Language, emailArg, user.IsActive, user.ID,
 	).Scan(&user.UpdatedAt)
 
 	if err != nil {
@@ -415,6 +422,37 @@ func (r *userRepository) ListActive(ctx context.Context) ([]*models.User, error)
 	}
 
 	return users, rows.Err()
+}
+
+// UpdatePushToken stores or replaces the Expo push token for a user.
+func (r *userRepository) UpdatePushToken(ctx context.Context, userID, token string) error {
+	if userID == "" {
+		return errors.NewValidationError("user id is required", nil)
+	}
+	query := `UPDATE users SET push_token = $1, updated_at = NOW() WHERE id = $2`
+	_, err := r.executor.ExecContext(ctx, query, token, userID)
+	if err != nil {
+		return errors.NewDatabaseError("failed to update push token", err)
+	}
+	return nil
+}
+
+// GetPushToken retrieves the stored Expo push token for a user.
+// Returns an empty string (and no error) if the user has no token.
+func (r *userRepository) GetPushToken(ctx context.Context, userID string) (string, error) {
+	if userID == "" {
+		return "", errors.NewValidationError("user id is required", nil)
+	}
+	var token sql.NullString
+	query := `SELECT push_token FROM users WHERE id = $1`
+	err := r.executor.QueryRowContext(ctx, query, userID).Scan(&token)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil
+		}
+		return "", errors.NewDatabaseError("failed to get push token", err)
+	}
+	return token.String, nil
 }
 
 // generateUUID creates a UUID v4 string

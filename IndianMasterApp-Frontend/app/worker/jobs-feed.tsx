@@ -1,18 +1,21 @@
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, useWindowDimensions, Image, Alert, Platform, Linking, TextInput, KeyboardAvoidingView, Keyboard, Animated, Modal } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, useWindowDimensions, Image, Alert, Platform, Linking, TextInput, KeyboardAvoidingView, Keyboard, Animated, Modal, Dimensions } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { useState } from 'react';
-import { MapPin, Clock, DollarSign, Building, Briefcase, Search, MessageCircle, User as UserIcon, Settings, LogOut, ChevronRight, Star, Camera, Plus, Clipboard } from 'lucide-react-native';
+import { MapPin, Clock, Building, Briefcase, Search, MessageCircle, User as UserIcon, Settings, LogOut, ChevronRight, Star, Camera, Plus, Clipboard, Bell, Phone, Menu, X, Lock, Globe } from 'lucide-react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { useTranslation } from 'react-i18next';
-import AppHeader from '@/components/AppHeader';
-import { getProfileData, saveProfileData, clearAll, getAuthSession } from '@/utils/storage';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import FadeInView from '@/components/FadeInView';
+import TopNavBar from '@/components/TopNavBar';
+import { getProfileData, saveProfileData, clearAll, getAuthSession, getAuthToken } from '@/utils/storage';
 import React, { useCallback, useEffect, useRef } from 'react';
 import Card from '@/components/Card';
 import PrimaryButton from '@/components/PrimaryButton';
 import ProgressIndicator from '@/components/ProgressIndicator';
-import { getJobsFeed, getWorkerProfile, applyToJob, getMyApplications, getChatThreads, submitInstantApplication, JobFeedItem, ChatThread } from '@/services/workerService';
+import { getJobsFeed, getWorkerProfile, applyToJob, getMyApplications, getChatThreads, submitInstantApplication, uploadWorkerPhoto, uploadWorkerResume, getWorkerResume, openWorkerResume, JobFeedItem, ChatThread, WorkerResumeResponse } from '@/services/workerService';
+import { getUnreadCount } from '@/services/notificationService';
 import { ApiError } from '@/services/apiClient';
 import { COLORS, SHADOWS } from '@/constants/theme';
 
@@ -20,6 +23,7 @@ const FALLBACK_CHAT_IMAGE = 'https://images.unsplash.com/photo-1517248135467-4c7
 
 export default function JobsFeedScreen() {
   const { t } = useTranslation();
+  const insets = useSafeAreaInsets();
   const params = useLocalSearchParams();
   const [appliedJobs, setAppliedJobs] = useState<string[]>([]);
   const [savedJobs, setSavedJobs] = useState<string[]>([]);
@@ -32,6 +36,13 @@ export default function JobsFeedScreen() {
   const [chatThreads, setChatThreads] = useState<ChatThread[]>([]);
   const [instantJobModalVisible, setInstantJobModalVisible] = useState(false);
   const [formSubmitting, setFormSubmitting] = useState(false);
+  const [resume, setResume] = useState<WorkerResumeResponse | null>(null);
+  const [uploadingResume, setUploadingResume] = useState(false);
+  const [openingResume, setOpeningResume] = useState(false);
+  const [resumeJustUploaded, setResumeJustUploaded] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [menuVisible, setMenuVisible] = useState(false);
+  const menuSlideAnim = useRef(new Animated.Value(Dimensions.get('window').width)).current;
 
   // ⚡ Blink animation for Instant Job badge
   const blinkAnim = useRef(new Animated.Value(1)).current;
@@ -59,10 +70,21 @@ export default function JobsFeedScreen() {
     useCallback(() => {
       const loadProfile = async () => {
         const session = await getAuthSession();
-        if (!session?.loggedIn) {
+        const token = await getAuthToken();
+        // Guard: require a worker session with a stored JWT.
+        // Checking role prevents a stale hirer JWT from reaching worker API
+        // endpoints, where it would get a 403 that was previously swallowed silently.
+        if (!session?.loggedIn || !token || session.role !== 'worker') {
           router.replace('/');
           return;
         }
+
+        const handleAuthError = (e: any) => {
+          if (e instanceof ApiError && (e.statusCode === 401 || e.statusCode === 403)) {
+            clearAll().then(() => router.replace('/'));
+          }
+        };
+
         const data = await getProfileData();
         if (data) {
           setProfileData(data);
@@ -73,31 +95,70 @@ export default function JobsFeedScreen() {
         try {
           const profile = await getWorkerProfile();
           setWorkerProfile(profile);
-        } catch {
-          // fall back to profileData
+          // Prefer the backend-stored photo URL over the local AsyncStorage copy
+          if (profile.profilePhotoUrl) {
+            setProfileImage({ uri: profile.profilePhotoUrl });
+          }
+        } catch (e: any) {
+          handleAuthError(e);
         }
         try {
           const result = await getJobsFeed(1, 20);
           setFeedJobs(result.data);
-        } catch {
-          // keep empty list
+        } catch (e: any) {
+          handleAuthError(e);
         }
         try {
           const appResult = await getMyApplications(1, 100);
           setAppliedJobs(appResult.data.map((a) => a.jobId));
-        } catch {
-          // keep current applied state
+        } catch (e: any) {
+          handleAuthError(e);
         }
         try {
           const chatResult = await getChatThreads(1, 20);
           setChatThreads(chatResult.data);
-        } catch {
-          // keep empty list
+        } catch (e: any) {
+          handleAuthError(e);
         }
+        try {
+          const existingResume = await getWorkerResume();
+          setResume(existingResume);
+        } catch {
+          // non-critical — leave resume as null
+        }
+        getUnreadCount().then(setUnreadCount).catch(() => {});
       };
       loadProfile();
     }, [])
   );
+
+  useEffect(() => {
+    if (menuVisible) {
+      Animated.timing(menuSlideAnim, {
+        toValue: 0,
+        duration: 300,
+        useNativeDriver: true,
+      }).start();
+    } else {
+      Animated.timing(menuSlideAnim, {
+        toValue: Dimensions.get('window').width,
+        duration: 250,
+        useNativeDriver: true,
+      }).start();
+    }
+  }, [menuVisible]);
+
+  const toggleMenu = (visible: boolean) => {
+    if (visible) {
+      setMenuVisible(true);
+    } else {
+      Animated.timing(menuSlideAnim, {
+        toValue: Dimensions.get('window').width,
+        duration: 250,
+        useNativeDriver: true,
+      }).start(() => setMenuVisible(false));
+    }
+  };
 
   useEffect(() => {
     if (params.initialTab) {
@@ -106,11 +167,17 @@ export default function JobsFeedScreen() {
   }, [params.initialTab]);
 
   // Prefer backend-computed value; fall back to route param → AsyncStorage → default 40
-  const completionPercentage = workerProfile?.completionPercentage
-    ?? (params.completionPercentage
-      ? parseInt(params.completionPercentage as string)
-      : (profileData?.completionPercentage ? parseInt(profileData.completionPercentage) : 40));
-  const isProfileComplete = completionPercentage === 100;
+const handlePhotoUpload = async (uri: string, mimeType: string) => {
+    try {
+      const url = await uploadWorkerPhoto(uri, mimeType);
+      setProfileImage({ uri: url });
+      await saveProfileData({ profileImage: url });
+    } catch {
+      // Upload failed — fall back to showing the local image without persisting
+      setProfileImage({ uri });
+      Alert.alert('Upload failed', 'Profile photo saved locally but could not be uploaded. Try again later.');
+    }
+  };
 
   const pickImage = async () => {
     if (Platform.OS === 'web') {
@@ -121,9 +188,8 @@ export default function JobsFeedScreen() {
         quality: 1,
       });
       if (!result.canceled) {
-        const newUri = result.assets[0].uri;
-        setProfileImage({ uri: newUri });
-        await saveProfileData({ profileImage: newUri });
+        const asset = result.assets[0];
+        await handlePhotoUpload(asset.uri, asset.mimeType ?? 'image/jpeg');
       }
       return;
     }
@@ -147,9 +213,8 @@ export default function JobsFeedScreen() {
               quality: 0.5,
             });
             if (!result.canceled) {
-              const newUri = result.assets[0].uri;
-              setProfileImage({ uri: newUri });
-              await saveProfileData({ profileImage: newUri });
+              const asset = result.assets[0];
+              await handlePhotoUpload(asset.uri, asset.mimeType ?? 'image/jpeg');
             }
           }
         },
@@ -168,9 +233,8 @@ export default function JobsFeedScreen() {
               quality: 0.5,
             });
             if (!result.canceled) {
-              const newUri = result.assets[0].uri;
-              setProfileImage({ uri: newUri });
-              await saveProfileData({ profileImage: newUri });
+              const asset = result.assets[0];
+              await handlePhotoUpload(asset.uri, asset.mimeType ?? 'image/jpeg');
             }
           }
         },
@@ -221,7 +285,7 @@ export default function JobsFeedScreen() {
   };
 
   const handleViewDetails = (jobId: string) => {
-    Alert.alert('Job Details', 'Full job details would open here.');
+    router.push({ pathname: '/worker/job-detail', params: { jobId } });
   };
 
   const handleWatchVideo = () => {
@@ -236,16 +300,63 @@ export default function JobsFeedScreen() {
       });
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
-        Alert.alert('Success', `Successfully uploaded: ${result.assets[0].name}`);
-        // Optionally save to profileData here or API call
+        const asset = result.assets[0];
+        const mimeType = asset.mimeType ?? 'application/octet-stream';
+        const fileName = asset.name ?? 'resume';
+        setUploadingResume(true);
+        try {
+          const uploaded = await uploadWorkerResume(asset.uri, mimeType, fileName);
+          setResume(uploaded);
+          setResumeJustUploaded(true);
+        } catch (uploadErr: any) {
+          Alert.alert('Upload Failed', uploadErr?.message ?? 'Failed to upload resume. Please try again.');
+        } finally {
+          setUploadingResume(false);
+        }
       }
     } catch (err) {
-      console.error("Error picking document", err);
       Alert.alert('Error', 'Failed to pick resume document');
     }
   };
 
+  const handleOpenResume = async () => {
+    if (!resume) return;
+    setOpeningResume(true);
+    try {
+      await openWorkerResume(resume);
+    } catch (err: any) {
+      Alert.alert('Error', err?.message ?? 'Could not open resume. Please try again.');
+    } finally {
+      setOpeningResume(false);
+    }
+  };
+
   // --- HELPERS ---
+
+  const haversineKm = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+    const R = 6371;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) ** 2 +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  };
+
+  const isValidCoord = (v: number | null | undefined): v is number =>
+    v != null && !isNaN(v) && isFinite(v) && v !== 0;
+
+  const formatJobDistance = (jobLat: number | null, jobLon: number | null): string => {
+    const workerLat = workerProfile?.liveLatitude;
+    const workerLon = workerProfile?.liveLongitude;
+    if (
+      isValidCoord(workerLat) && isValidCoord(workerLon) &&
+      isValidCoord(jobLat) && isValidCoord(jobLon)
+    ) {
+      const km = haversineKm(workerLat, workerLon, jobLat, jobLon);
+      return km < 1 ? `${Math.round(km * 1000)} m away` : `${km.toFixed(1)} km away`;
+    }
+    return '';
+  };
 
   const formatSalary = (min: number, max: number): string => {
     if (!min && !max) return '';
@@ -294,6 +405,7 @@ export default function JobsFeedScreen() {
         const salary = formatSalary(job.salaryMinAmount, job.salaryMaxAmount);
         const timing = job.workingHours ? `${job.workingHours} hrs/day` : '';
         const experience = job.experienceMin ? `${job.experienceMin}+ yrs` : '';
+        const distance = formatJobDistance(job.latitude, job.longitude);
 
         return (
           <Card
@@ -303,6 +415,7 @@ export default function JobsFeedScreen() {
               isSmallScreen && styles.jobCardSmall
             ]}
           >
+            <TouchableOpacity activeOpacity={0.7} onPress={() => handleViewDetails(job.id)}>
             <View style={styles.jobHeader}>
               <View style={styles.jobTitleRow}>
                 <Text style={[
@@ -332,7 +445,6 @@ export default function JobsFeedScreen() {
             ]}>
               {!!salary && (
                 <View style={styles.detailRow}>
-                  <DollarSign size={isSmallScreen ? 14 : 16} color={COLORS.success} />
                   <Text style={[
                     styles.salary,
                     isSmallScreen && styles.salarySmall
@@ -349,7 +461,7 @@ export default function JobsFeedScreen() {
                     styles.location,
                     isSmallScreen && styles.locationSmall
                   ]}>
-                    {location}
+                    {location}{!!distance ? `  ·  ${distance}` : ''}
                   </Text>
                 </View>
               )}
@@ -405,6 +517,7 @@ export default function JobsFeedScreen() {
                 ))}
               </View>
             </View>
+            </TouchableOpacity>
 
             <View style={[
               styles.actionButtons,
@@ -449,51 +562,62 @@ export default function JobsFeedScreen() {
   const totalUnread = chatThreads.reduce((sum, t) => sum + (t.unreadCount ?? 0), 0);
 
   const renderChats = () => (
-    <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-      <View style={styles.chatHeader}>
-        <Text style={styles.chatTitle}>{t('chats')}</Text>
-        {totalUnread > 0 && (
-          <View style={styles.chatBadge}>
-            <Text style={styles.chatBadgeText}>{totalUnread} New</Text>
-          </View>
-        )}
-      </View>
-      {chatThreads.length === 0 ? (
-        <View style={styles.centerContent}>
-          <MessageCircle size={48} color={COLORS.border} />
-          <Text style={styles.emptyTitle}>No conversations yet</Text>
-          <Text style={styles.emptySubtitle}>Hirers who contact you will appear here</Text>
-        </View>
-      ) : chatThreads.map((thread) => {
-        const displayName = thread.hirerName || `Hirer ${thread.hirerId.slice(0, 6)}`;
-        const preview = thread.lastMessagePreview || 'Tap to view messages';
-        return (
-          <TouchableOpacity
-            key={thread.id}
-            style={styles.chatItem}
-            onPress={() => router.push({
-              pathname: '/chat/[id]',
-              params: { id: thread.id, name: displayName, image: FALLBACK_CHAT_IMAGE }
-            })}
-          >
-            <Image source={{ uri: FALLBACK_CHAT_IMAGE }} style={styles.chatAvatar} />
-            <View style={styles.chatInfo}>
-              <View style={styles.chatNameRow}>
-                <Text style={styles.chatName}>{displayName}</Text>
-                <Text style={styles.chatTime}>{formatThreadTime(thread.lastMessageAt)}</Text>
-              </View>
-              <View style={styles.chatMessageRow}>
-                <Text style={styles.chatMessage} numberOfLines={1}>{preview}</Text>
-                {thread.unreadCount > 0 && (
-                  <View style={styles.unreadBadge}>
-                    <Text style={styles.unreadText}>{thread.unreadCount}</Text>
-                  </View>
-                )}
-              </View>
+    <ScrollView style={styles.content} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <FadeInView style={styles.floatingWorkspace}>
+        <View style={styles.islandSurface}>
+          <View style={styles.islandSection}>
+            <View style={styles.sectionHeading}>
+              <View style={[styles.accentRing, { borderColor: COLORS.primary }]} />
+              <Text style={styles.islandSectionTitle}>{t('chats')}</Text>
             </View>
-          </TouchableOpacity>
-        );
-      })}
+
+            {chatThreads.length === 0 ? (
+              <View style={{ padding: 40, alignItems: 'center' }}>
+                <MessageCircle size={48} color={COLORS.border} />
+                <Text style={{ marginTop: 12, color: COLORS.textSecondary, textAlign: 'center' }}>
+                  No conversations yet.{'\n'}Hirers who contact you{'\n'}will appear here.
+                </Text>
+              </View>
+            ) : chatThreads.map((thread) => {
+              const displayName = thread.hirerName || `Hirer ${thread.hirerId.slice(0, 6)}`;
+              const preview = thread.lastMessagePreview || 'Tap to view messages';
+              return (
+                <TouchableOpacity
+                  key={thread.id}
+                  style={styles.vibrantWorkerCard}
+                  onPress={() => router.push({
+                    pathname: '/chat/[id]',
+                    params: { id: thread.id, name: displayName, image: FALLBACK_CHAT_IMAGE }
+                  })}
+                  activeOpacity={0.9}
+                >
+                  <View style={styles.workerMainInfo}>
+                    <View style={styles.vibrantPhotoBox}>
+                      <Image source={{ uri: FALLBACK_CHAT_IMAGE }} style={styles.vibrantPhoto} />
+                      {thread.unreadCount > 0 && (
+                        <View style={[styles.vibrantOnlineBadge, { backgroundColor: COLORS.primary }]} />
+                      )}
+                    </View>
+
+                    <View style={styles.vibrantDetails}>
+                      <View style={styles.nameRow}>
+                        <Text style={styles.vibrantWorkerName}>{displayName}</Text>
+                        <Text style={styles.chatTime}>{formatThreadTime(thread.lastMessageAt)}</Text>
+                      </View>
+                      <Text style={styles.chatLastMessage} numberOfLines={1}>{preview}</Text>
+                      {thread.unreadCount > 0 && (
+                        <View style={styles.unreadBadge}>
+                          <Text style={styles.unreadText}>{thread.unreadCount}</Text>
+                        </View>
+                      )}
+                    </View>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+      </FadeInView>
     </ScrollView>
   );
 
@@ -513,9 +637,8 @@ export default function JobsFeedScreen() {
         location: formData.location || undefined,
         companyName: formData.companyName || undefined,
       });
-      Alert.alert('Application Sent!', 'Your application has been submitted successfully.');
       setFormData({ name: '', phone: '', role: '', experience: '', location: '', companyName: '' });
-      setInstantJobModalVisible(false);
+      router.push('/worker/job-applied-success');
     } catch (e: any) {
       Alert.alert('Submission Failed', e?.message ?? 'Could not submit application. Please try again.');
     } finally {
@@ -707,13 +830,87 @@ export default function JobsFeedScreen() {
         <TouchableOpacity
           style={styles.menuItem}
           onPress={handleResumeUpload}
+          disabled={uploadingResume}
         >
           <View style={[styles.menuIconContainer, { backgroundColor: '#E0E7FF' }]}>
             <MaterialCommunityIcons name="file-document-outline" size={20} color="#4338CA" />
           </View>
-          <Text style={styles.menuText}>{t('workerProfile.uploadResume')}</Text>
+          <Text style={styles.menuText}>
+            {uploadingResume ? 'Uploading...' : resume ? 'Replace Resume' : t('workerProfile.uploadResume')}
+          </Text>
           <ChevronRight size={20} color={COLORS.textSecondary} />
         </TouchableOpacity>
+
+        {/* Resume Status Card */}
+        <View style={[
+          styles.resumeStatusCard,
+          resume && !uploadingResume && styles.resumeStatusCardUploaded,
+        ]}>
+          {uploadingResume ? (
+            <View style={styles.resumeStatusRow}>
+              <View style={styles.resumeIconWrap}>
+                <MaterialCommunityIcons name="cloud-upload-outline" size={22} color="#4338CA" />
+              </View>
+              <View style={styles.resumeStatusTextBlock}>
+                <Text style={styles.resumeStatusTitle}>Uploading resume...</Text>
+                <Text style={styles.resumeStatusSub}>Please wait</Text>
+              </View>
+            </View>
+          ) : resume ? (
+            <>
+              <View style={styles.resumeStatusRow}>
+                <View style={styles.resumeIconWrap}>
+                  <MaterialCommunityIcons
+                    name={resume.mimeType?.includes('pdf') ? 'file-pdf-box' : 'file-word-box'}
+                    size={26}
+                    color={resume.mimeType?.includes('pdf') ? '#DC2626' : '#2563EB'}
+                  />
+                </View>
+                <View style={styles.resumeStatusTextBlock}>
+                  <Text style={styles.resumeStatusTitle} numberOfLines={1}>
+                    {(() => { try { return decodeURIComponent(resume.originalName).replace(/\+/g, ' '); } catch { return resume.originalName; } })()}
+                  </Text>
+                  <Text style={styles.resumeStatusSub}>
+                    {resume.fileSize >= 1024 * 1024
+                      ? `${(resume.fileSize / (1024 * 1024)).toFixed(1)} MB`
+                      : `${(resume.fileSize / 1024).toFixed(0)} KB`
+                    } · {resume.uploadedAt && !isNaN(new Date(resume.uploadedAt).getTime())
+                      ? new Date(resume.uploadedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+                      : 'Recently uploaded'}
+                  </Text>
+                  <Text style={styles.resumeReadyText}>
+                    {resumeJustUploaded ? 'Resume uploaded successfully' : 'Your resume is ready'}
+                  </Text>
+                </View>
+                <View style={styles.resumeUploadedBadge}>
+                  <MaterialCommunityIcons name="check" size={11} color="#16A34A" />
+                  <Text style={styles.resumeUploadedBadgeText}>Uploaded</Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                style={styles.resumeViewBtn}
+                onPress={handleOpenResume}
+                disabled={openingResume}
+                activeOpacity={0.7}
+              >
+                <MaterialCommunityIcons name="eye-outline" size={13} color="#4338CA" />
+                <Text style={styles.resumeViewBtnText}>
+                  {openingResume ? 'Opening...' : 'View Resume'}
+                </Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <View style={styles.resumeStatusRow}>
+              <View style={styles.resumeIconWrap}>
+                <MaterialCommunityIcons name="file-upload-outline" size={22} color={COLORS.textSecondary} />
+              </View>
+              <View style={styles.resumeStatusTextBlock}>
+                <Text style={[styles.resumeStatusTitle, styles.resumeEmptyTitle]}>No resume uploaded yet</Text>
+                <Text style={styles.resumeStatusSub}>Upload a PDF or Word document to boost your profile</Text>
+              </View>
+            </View>
+          )}
+        </View>
 
         <TouchableOpacity
           style={styles.menuItem}
@@ -771,8 +968,117 @@ export default function JobsFeedScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Header handled manually instead of AppHeader inside render to control title */}
-      <AppHeader showNotification={true} />
+      {/* Header Area — matches Hirer page structure */}
+      <View style={styles.headerContainer}>
+        <TopNavBar unreadCount={unreadCount} onMenuPress={() => toggleMenu(true)} />
+        <View style={styles.vibrantHeader}>
+          <View style={styles.headerHero}>
+            <View style={styles.heroTextBox}>
+              <Text style={styles.vibrantTitle}>{title}</Text>
+              <Text style={styles.vibrantSubtitle}>{subtitle}</Text>
+            </View>
+            <View style={styles.heroIconBox}>
+              {activeTab === 'jobs' && <Briefcase size={32} color="rgba(255,255,255,0.3)" />}
+              {activeTab === 'chats' && <MessageCircle size={32} color="rgba(255,255,255,0.3)" />}
+              {activeTab === 'form' && <Clipboard size={32} color="rgba(255,255,255,0.3)" />}
+              {activeTab === 'saved' && <Star size={32} color="rgba(255,255,255,0.3)" />}
+              {activeTab === 'profile' && <UserIcon size={32} color="rgba(255,255,255,0.3)" />}
+            </View>
+          </View>
+        </View>
+      </View>
+
+      {/* Menu Drawer Modal */}
+      <Modal
+        visible={menuVisible}
+        transparent={true}
+        animationType="none"
+        onRequestClose={() => toggleMenu(false)}
+      >
+        <View style={styles.workerMenuOverlay}>
+          <TouchableOpacity
+            style={styles.workerMenuCloseArea}
+            activeOpacity={1}
+            onPress={() => toggleMenu(false)}
+          />
+          <Animated.View
+            style={[
+              styles.workerMenuDrawer,
+              { transform: [{ translateX: menuSlideAnim }] }
+            ]}
+          >
+            <View style={[styles.workerMenuHeader, { paddingTop: insets.top + 20 }]}>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Image
+                  source={require('@/assets/images/icon.png')}
+                  style={styles.workerDrawerLogo}
+                  resizeMode="contain"
+                />
+              </View>
+              <TouchableOpacity onPress={() => toggleMenu(false)} style={styles.workerDrawerCloseButton}>
+                <X size={24} color={COLORS.secondary} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
+              <View style={styles.workerDrawerSection}>
+                <Text style={styles.workerDrawerSectionTitle}>{t('profile')}</Text>
+                <TouchableOpacity style={styles.workerMenuRow} onPress={() => { toggleMenu(false); setActiveTab('profile'); }}>
+                  <UserIcon size={20} color={COLORS.secondary} />
+                  <Text style={styles.workerMenuRowText}>{t('profile')}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.workerMenuRow} onPress={() => { toggleMenu(false); setActiveTab('saved'); }}>
+                  <Star size={20} color={COLORS.secondary} />
+                  <Text style={styles.workerMenuRowText}>{t('workerProfile.savedJobs')}</Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.workerDrawerDivider} />
+
+              <View style={styles.workerDrawerSection}>
+                <Text style={styles.workerDrawerSectionTitle}>{t('supportBtn')}</Text>
+                <TouchableOpacity style={styles.workerMenuRow} onPress={() => { toggleMenu(false); router.push('/worker/help-support'); }}>
+                  <Globe size={20} color={COLORS.secondary} />
+                  <Text style={styles.workerMenuRowText}>{t('helpSupport')}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.workerMenuRow} onPress={() => { toggleMenu(false); Alert.alert('Privacy & Terms', 'Privacy Policy and Terms of Service...'); }}>
+                  <Lock size={20} color={COLORS.secondary} />
+                  <Text style={styles.workerMenuRowText}>{t('privacyTerms')}</Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.workerDrawerDivider} />
+
+              <TouchableOpacity
+                style={[styles.workerMenuRow, { marginTop: 10 }]}
+                onPress={() => {
+                  toggleMenu(false);
+                  Alert.alert(
+                    t('logout'),
+                    'Are you sure you want to log out?',
+                    [
+                      { text: 'Cancel', style: 'cancel' },
+                      {
+                        text: t('logout'),
+                        style: 'destructive',
+                        onPress: async () => {
+                          await clearAll();
+                          router.replace('/');
+                        }
+                      }
+                    ]
+                  );
+                }}
+              >
+                <View style={styles.workerLogoutIconBox}>
+                  <LogOut size={20} color={COLORS.error} />
+                </View>
+                <Text style={[styles.workerMenuRowText, { color: COLORS.error }]}>{t('logout')}</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </Animated.View>
+        </View>
+      </Modal>
 
       {/* ⚡ Instant Job Custom Modal */}
       <Modal
@@ -812,37 +1118,6 @@ export default function JobsFeedScreen() {
         </View>
       </Modal>
 
-      <View style={[
-        styles.header,
-        isSmallScreen && styles.headerSmall
-      ]}>
-        {activeTab === 'jobs' && (
-          <TouchableOpacity
-            style={styles.completionContainer}
-            onPress={() => {
-              if (!isProfileComplete) {
-                router.push('/worker/profile-setup');
-              }
-            }}
-            activeOpacity={0.8}
-          >
-            <View style={styles.completionHeader}>
-              <Text style={styles.completionTitle}>{t('workerProfile.profileCompletion')}</Text>
-              <Text style={styles.completionPercent}>{completionPercentage}%</Text>
-            </View>
-            <View style={styles.progressBarBg}>
-              <View style={[styles.progressBarFill, { width: `${completionPercentage}%` }]} />
-            </View>
-            <Text style={styles.completionSubtext}>
-              {isProfileComplete
-                ? t('workerProfile.profileCompletedMsg')
-                : t('workerProfile.completeProfilePrompt')}
-            </Text>
-          </TouchableOpacity>
-        )}
-        <Text style={[styles.title, isSmallScreen && styles.titleSmall]}>{title}</Text>
-        <Text style={[styles.subtitle, isSmallScreen && styles.subtitleSmall]}>{subtitle}</Text>
-      </View>
 
       {activeTab === 'jobs' && renderJobs()}
       {activeTab === 'chats' && renderChats()}
@@ -936,30 +1211,126 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: COLORS.white,
   },
-  header: {
-    paddingHorizontal: 20,
-    paddingBottom: 16,
+  // Header — matches Hirer page
+  headerContainer: {
+    backgroundColor: COLORS.white,
   },
-  headerSmall: {
-    paddingHorizontal: 16,
-    paddingBottom: 12,
+  vibrantHeader: {
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: 24,
+    paddingBottom: 60,
+    borderBottomLeftRadius: 50,
+    borderBottomRightRadius: 50,
   },
-  title: {
+  headerHero: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  heroTextBox: {
+    flex: 1,
+  },
+  vibrantTitle: {
+    color: '#FFFFFF',
     fontSize: 24,
-    fontWeight: 'bold',
-    color: COLORS.text,
-    marginBottom: 8,
+    fontWeight: '900',
+    letterSpacing: -0.5,
+    lineHeight: 30,
   },
-  titleSmall: {
-    fontSize: 20,
-    marginBottom: 6,
-  },
-  subtitle: {
-    fontSize: 16,
-    color: COLORS.textSecondary,
-  },
-  subtitleSmall: {
+  vibrantSubtitle: {
+    color: 'rgba(255,255,255,0.8)',
     fontSize: 14,
+    marginTop: 6,
+    lineHeight: 20,
+    fontWeight: '500',
+  },
+  heroIconBox: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // Worker menu drawer
+  workerMenuOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    flexDirection: 'row',
+  },
+  workerMenuCloseArea: {
+    flex: 1,
+  },
+  workerMenuDrawer: {
+    width: 320,
+    maxWidth: '85%',
+    height: '100%',
+    backgroundColor: COLORS.white,
+    borderTopLeftRadius: 32,
+    borderBottomLeftRadius: 32,
+    ...Platform.select({
+      ios: SHADOWS.large,
+      android: { ...SHADOWS.large, elevation: 20 }
+    }),
+  },
+  workerMenuHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 24,
+    paddingBottom: 20,
+  },
+  workerDrawerLogo: {
+    width: 130,
+    height: 45,
+    marginLeft: -5,
+  },
+  workerDrawerCloseButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  workerDrawerSection: {
+    paddingHorizontal: 24,
+    paddingTop: 10,
+  },
+  workerDrawerSectionTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: COLORS.textLight,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    marginBottom: 10,
+    marginLeft: 4,
+  },
+  workerDrawerDivider: {
+    height: 1.5,
+    backgroundColor: '#F8FAFC',
+    marginVertical: 15,
+  },
+  workerMenuRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    paddingVertical: 18,
+    gap: 16,
+  },
+  workerMenuRowText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: COLORS.secondary,
+  },
+  workerLogoutIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#FEE2E2',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   content: {
     flex: 1,
@@ -1330,12 +1701,185 @@ const styles = StyleSheet.create({
     marginRight: 16,
   },
   menuText: {
-    flex: 1,
     fontSize: 16,
     fontWeight: '500',
     color: COLORS.text,
   },
+  resumeStatusCard: {
+    marginHorizontal: 16,
+    marginTop: 2,
+    marginBottom: 6,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 14,
+  },
+  resumeStatusCardUploaded: {
+    backgroundColor: '#F0FDF4',
+    borderColor: '#BBF7D0',
+  },
+  resumeIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    backgroundColor: COLORS.white,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  resumeStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  resumeStatusTextBlock: {
+    flex: 1,
+  },
+  resumeStatusTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.text,
+  },
+  resumeEmptyTitle: {
+    color: COLORS.textSecondary,
+    fontWeight: '500',
+  },
+  resumeStatusSub: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    marginTop: 2,
+  },
+  resumeReadyText: {
+    fontSize: 12,
+    color: '#16A34A',
+    fontWeight: '500',
+    marginTop: 3,
+  },
+  resumeUploadedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 20,
+    alignSelf: 'flex-start',
+  },
+  resumeUploadedBadgeText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#16A34A',
+  },
+  resumeViewBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 5,
+    marginTop: 10,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    backgroundColor: '#EEF2FF',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+  },
+  resumeViewBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#4338CA',
+  },
   // --- Chat Styles ---
+  // ── Chat tab — island layout (matches hirer UI) ──────────────────────────────
+  floatingWorkspace: {
+    marginTop: -30,
+    paddingHorizontal: 16,
+  },
+  islandSurface: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 40,
+    paddingVertical: 10,
+    ...SHADOWS.medium,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginBottom: 20,
+  },
+  islandSection: {
+    paddingHorizontal: 20,
+    paddingVertical: 24,
+  },
+  sectionHeading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 24,
+  },
+  accentRing: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    borderWidth: 3,
+  },
+  islandSectionTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: COLORS.secondary,
+    flex: 1,
+    lineHeight: 24,
+  },
+  vibrantWorkerCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    borderWidth: 1.5,
+    borderColor: '#F1F5F9',
+    padding: 16,
+    marginBottom: 16,
+    ...SHADOWS.small,
+  },
+  workerMainInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  vibrantPhotoBox: {
+    position: 'relative',
+    marginRight: 16,
+  },
+  vibrantPhoto: {
+    width: 64,
+    height: 64,
+    borderRadius: 20,
+    backgroundColor: '#F1F5F9',
+  },
+  vibrantOnlineBadge: {
+    position: 'absolute',
+    bottom: -2,
+    right: -2,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    borderWidth: 3,
+    borderColor: '#FFFFFF',
+  },
+  vibrantDetails: {
+    flex: 1,
+  },
+  nameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  vibrantWorkerName: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: COLORS.secondary,
+  },
+  chatLastMessage: {
+    fontSize: 14,
+    color: COLORS.textSecondary,
+    marginTop: 4,
+  },
+  // ── End chat island styles ────────────────────────────────────────────────────
   chatHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1407,12 +1951,12 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   unreadBadge: {
+    marginTop: 4,
+    alignSelf: 'flex-start',
     backgroundColor: COLORS.primary,
-    width: 20,
-    height: 20,
     borderRadius: 10,
-    justifyContent: 'center',
-    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
   },
   unreadText: {
     color: COLORS.white,
@@ -1438,43 +1982,6 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     marginBottom: 16,
     marginTop: 8,
-  },
-  completionContainer: {
-    backgroundColor: '#F3F4F6',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 16,
-  },
-  completionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  completionTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: COLORS.text,
-  },
-  completionPercent: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: COLORS.primary,
-  },
-  progressBarBg: {
-    height: 8,
-    backgroundColor: '#E5E7EB',
-    borderRadius: 4,
-    overflow: 'hidden',
-    marginBottom: 8,
-  },
-  progressBarFill: {
-    height: '100%',
-    backgroundColor: COLORS.primary,
-    borderRadius: 4,
-  },
-  completionSubtext: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
   },
   // ⚡ Instant Job Modal Styles
   modalOverlay: {

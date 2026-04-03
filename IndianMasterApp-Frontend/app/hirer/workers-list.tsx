@@ -4,19 +4,19 @@ import * as ImagePicker from 'expo-image-picker';
 import { router, useFocusEffect } from 'expo-router';
 import { MapPin, Calendar, Bell, Menu, MessageCircle, Briefcase, User as UserIcon, Search, Clipboard, ChevronRight, Plus, Settings, LogOut, Moon, Star, Lock, X, Phone, Globe, Check } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { workers } from '@/data/workers';
 import { COLORS, SHADOWS, SPACING } from '@/constants/theme';
-import { getProfileData, saveProfileData, clearAll, getAuthSession } from '@/utils/storage';
+import { getProfileData, saveProfileData, clearAll, getAuthSession, getAuthToken } from '@/utils/storage';
+import { getChatThreads, ChatThread, getMyHirerJobs, getHirerProfile, uploadHirerLogo, listWorkersForHirer, unlockWorkerContact, WorkerProfileResponse } from '@/services/workerService';
+import { getUnreadCount } from '@/services/notificationService';
+import { ApiError } from '@/services/apiClient';
 import PrimaryButton from '@/components/PrimaryButton';
+import TopNavBar from '@/components/TopNavBar';
 import { useTranslation } from 'react-i18next';
 import { StatusBar } from 'expo-status-bar';
 import FadeInView from '@/components/FadeInView';
 import { MaterialCommunityIcons, Feather, Ionicons } from '@expo/vector-icons';
 
-const MOCK_WORKER_CHATS = [
-  { id: '1', name: 'Sanjay', role: 'South Indian Cook', lastMessage: 'I am interested in the job.', time: '10:30 AM', unread: 1, image: 'https://images.unsplash.com/photo-1540569014015-19a7ee504e3a?q=80&w=100' },
-  { id: '2', name: 'Ravi', role: 'Waiter', lastMessage: 'What are the working hours?', time: '09:15 AM', unread: 0, image: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=100' },
-];
+const FALLBACK_AVATAR = 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?q=80&w=100';
 
 export default function WorkersListScreen() {
   const { t } = useTranslation();
@@ -29,9 +29,18 @@ export default function WorkersListScreen() {
   const [profileData, setProfileData] = useState<any>({});
   const slideAnim = useRef(new Animated.Value(Dimensions.get('window').width)).current;
   const [profileImage, setProfileImage] = useState<any>({ uri: 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?q=80&w=2070&auto=format&fit=crop' });
-  const [activeJobs, setActiveJobs] = useState([
-    { id: '1', title: 'Head Chef Needed', date: 'Posted 2 days ago', salary: '₹25k - ₹35k/mo', type: 'Full Time', applied: 12, shortlisted: 5, interviews: 2, status: 'Active' }
-  ]);
+  const [chatThreads, setChatThreads] = useState<ChatThread[]>([]);
+  const [activeJobs, setActiveJobs] = useState<any[]>([]);
+  const [businessName, setBusinessName] = useState<string>('');
+  const [availableWorkers, setAvailableWorkers] = useState<WorkerProfileResponse[]>([]);
+  const [hirerLatitude, setHirerLatitude] = useState<number | null>(null);
+  const [hirerLongitude, setHirerLongitude] = useState<number | null>(null);
+  const [contactingWorkerId, setContactingWorkerId] = useState<string | null>(null);
+  const [unreadCount, setUnreadCount] = useState(0);
+  // Ref holding the chat-list poll interval so it can be cleared without
+  // restarting on every render (same stable-ref pattern as the chat thread screen).
+  const chatPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const activeTabRef = useRef(activeTab);
 
   const pickImage = async () => {
     if (Platform.OS === 'web') {
@@ -45,6 +54,7 @@ export default function WorkersListScreen() {
         const newUri = result.assets[0].uri;
         setProfileImage({ uri: newUri });
         await saveProfileData({ profileImage: newUri });
+        try { await uploadHirerLogo(newUri); } catch { /* non-fatal */ }
       }
       return;
     }
@@ -71,6 +81,7 @@ export default function WorkersListScreen() {
               const newUri = result.assets[0].uri;
               setProfileImage({ uri: newUri });
               await saveProfileData({ profileImage: newUri });
+              try { await uploadHirerLogo(newUri); } catch { /* non-fatal */ }
             }
           }
         },
@@ -92,6 +103,7 @@ export default function WorkersListScreen() {
               const newUri = result.assets[0].uri;
               setProfileImage({ uri: newUri });
               await saveProfileData({ profileImage: newUri });
+              try { await uploadHirerLogo(newUri); } catch { /* non-fatal */ }
             }
           }
         },
@@ -112,15 +124,67 @@ export default function WorkersListScreen() {
   const { i18n } = useTranslation();
   const currentLang = languages.find(l => l.code === i18n.language) || languages[0];
 
+  // Keep ref in sync so the poll callback always sees the current tab without
+  // closing over a stale value.
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
+
+  // Silently refresh chat threads — used by the poll interval.
+  const refreshChatThreads = useCallback(async () => {
+    try {
+      const result = await getChatThreads(1, 50);
+      setChatThreads(result.data);
+    } catch {
+      // Ignore poll errors silently; the user is still on the screen.
+    }
+  }, []);
+
+  // Start / stop the 5-second chat-list poll.
+  // Extracted so both useFocusEffect and the tab-change useEffect can call it.
+  const startChatPoll = useCallback(() => {
+    if (chatPollRef.current) return; // already running
+    chatPollRef.current = setInterval(refreshChatThreads, 5000);
+  }, [refreshChatThreads]);
+
+  const stopChatPoll = useCallback(() => {
+    if (chatPollRef.current) {
+      clearInterval(chatPollRef.current);
+      chatPollRef.current = null;
+    }
+  }, []);
+
+  // When the active tab changes to/from 'chats', start/stop the poll.
+  useEffect(() => {
+    if (activeTab === 'chats') {
+      refreshChatThreads(); // immediate refresh when switching to Chats tab
+      startChatPoll();
+    } else {
+      stopChatPoll();
+    }
+    return stopChatPoll;
+  }, [activeTab, refreshChatThreads, startChatPoll, stopChatPoll]);
+
   // Fetch updated profile data whenever screen comes into focus
   useFocusEffect(
     useCallback(() => {
       const loadProfile = async () => {
         const session = await getAuthSession();
-        if (!session?.loggedIn) {
+        const token = await getAuthToken();
+        // Guard: require a hirer session with a stored JWT.
+        // Checking role prevents a stale worker JWT from reaching hirer API
+        // endpoints, where it would get a 403 that was previously swallowed silently.
+        if (!session?.loggedIn || !token || session.role !== 'hirer') {
           router.replace('/');
           return;
         }
+
+        const handleAuthError = (e: any) => {
+          if (e instanceof ApiError && (e.statusCode === 401 || e.statusCode === 403)) {
+            clearAll().then(() => router.replace('/'));
+          }
+        };
+
         const data = await getProfileData();
         if (data) {
           setProfileData(data);
@@ -128,9 +192,58 @@ export default function WorkersListScreen() {
             setProfileImage({ uri: data.profileImage });
           }
         }
+        try {
+          const result = await getChatThreads(1, 50);
+          setChatThreads(result.data);
+        } catch (e: any) {
+          handleAuthError(e);
+        }
+        try {
+          const jobsResult = await getMyHirerJobs();
+          setActiveJobs(jobsResult.data.map(j => ({
+            id: j.id,
+            title: j.roles?.length ? j.roles[0] : (j.jobRole || 'Job'),
+            date: j.createdAt ? `Posted ${new Date(j.createdAt).toLocaleDateString()}` : '',
+            salary: j.salaryMinAmount && j.salaryMaxAmount
+              ? `₹${Math.round(j.salaryMinAmount / 1000)}k - ₹${Math.round(j.salaryMaxAmount / 1000)}k/mo`
+              : '',
+            type: j.workType || '',
+            applied: 0,
+            shortlisted: 0,
+            interviews: 0,
+            status: j.status === 'open' ? 'Active' : j.status === 'paused' ? 'Paused' : 'Active',
+          })));
+        } catch (e: any) {
+          handleAuthError(e);
+        }
+        try {
+          const profile = await getHirerProfile();
+          if (profile?.businessName) setBusinessName(profile.businessName);
+          if (profile?.logoUrl) setProfileImage({ uri: profile.logoUrl });
+          if (profile?.latitude) setHirerLatitude(profile.latitude);
+          if (profile?.longitude) setHirerLongitude(profile.longitude);
+        } catch (e: any) {
+          handleAuthError(e);
+        }
+        try {
+          const workers = await listWorkersForHirer();
+          setAvailableWorkers(workers);
+        } catch (e: any) {
+          handleAuthError(e);
+        }
+        // Refresh unread notification count for bell badge
+        getUnreadCount().then(setUnreadCount).catch(() => {});
+
+        // If already on the Chats tab when screen refocuses, restart the poll.
+        if (activeTabRef.current === 'chats') {
+          startChatPoll();
+        }
       };
       loadProfile();
-    }, [])
+
+      // Stop the poll when the screen loses focus (e.g. user navigates to a chat thread).
+      return stopChatPoll;
+    }, [startChatPoll, stopChatPoll])
   );
 
   useEffect(() => {
@@ -172,9 +285,78 @@ export default function WorkersListScreen() {
     navInactive: darkMode ? '#6B7280' : COLORS.navInactive,
   };
 
-  const handleContactWorker = (workerId: string) => {
-    setSelectedWorker(workerId);
-    router.push(`/hirer/subscription?workerId=${workerId}`);
+  const haversineKm = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+    const R = 6371;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) ** 2 +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  };
+
+  const isValidCoord = (v: number | null | undefined): v is number =>
+    v != null && !isNaN(v) && isFinite(v) && v !== 0;
+
+  const formatDistance = (workerLat: number | null, workerLon: number | null): string => {
+    if (
+      isValidCoord(hirerLatitude) && isValidCoord(hirerLongitude) &&
+      isValidCoord(workerLat) && isValidCoord(workerLon)
+    ) {
+      const km = haversineKm(hirerLatitude, hirerLongitude, workerLat, workerLon);
+      return km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`;
+    }
+    return 'Distance unavailable';
+  };
+
+  // Navigate to the full worker profile detail screen (no subscription required).
+  const handleViewProfile = (worker: WorkerProfileResponse) => {
+    router.push({ pathname: '/hirer/worker-profile', params: { workerId: worker.id } });
+  };
+
+  // Build a WhatsApp deep-link with a prefilled message containing the worker's real details.
+  const buildWorkerWhatsAppURL = (phone: string, worker: WorkerProfileResponse): string => {
+    let digits = phone.replace(/\D/g, '');
+    if (digits.length === 10) digits = '91' + digits;
+
+    const role = worker.selectedRoles?.[0] ?? '';
+    const exp = worker.experienceYears > 0 ? `${worker.experienceYears} yr${worker.experienceYears !== 1 ? 's' : ''} experience` : 'Fresher';
+    const location = [worker.city, worker.state].filter(Boolean).join(', ');
+
+    let msg = `Hi, I found ${worker.fullName}'s profile on IndianMaster and I'm interested in hiring them.`;
+    if (role) msg += `\nRole: ${role}`;
+    msg += `\nExperience: ${exp}`;
+    if (location) msg += `\nLocation: ${location}`;
+
+    return `https://wa.me/${digits}?text=${encodeURIComponent(msg)}`;
+  };
+
+  // Attempt to unlock worker contact and open WhatsApp.
+  // If no active subscription, redirects to the paywall.
+  const handleContactWorker = async (worker: WorkerProfileResponse) => {
+    if (contactingWorkerId) return; // prevent double-tap
+    setContactingWorkerId(worker.id);
+    try {
+      const contact = await unlockWorkerContact(worker.id);
+      const url = buildWorkerWhatsAppURL(contact.phone, worker);
+      const canOpen = await Linking.canOpenURL(url);
+      if (canOpen) {
+        await Linking.openURL(url);
+      } else {
+        Alert.alert(
+          'WhatsApp not available',
+          `You can call or message this worker directly at: ${contact.phone}`,
+        );
+      }
+    } catch (e: any) {
+      if (e?.statusCode === 402) {
+        // No active subscription — send hirer to paywall.
+        router.push(`/hirer/subscription?workerId=${worker.id}`);
+      } else {
+        Alert.alert('Error', 'Could not contact worker. Please try again.');
+      }
+    } finally {
+      setContactingWorkerId(null);
+    }
   };
 
   const handleDeleteJob = (id: string) => {
@@ -222,42 +404,57 @@ export default function WorkersListScreen() {
               <Text style={styles.islandSectionTitle}>{t('availableWorkers')}</Text>
             </View>
 
-            {workers.map((worker, index) => {
-              const availabilityStatus = index % 3 === 0 ? 'AVAILABLE NOW' : index % 3 === 1 ? 'FROM MONDAY' : 'AVAILABLE NOW';
-              const availabilityColor = availabilityStatus === 'AVAILABLE NOW' ? COLORS.success : COLORS.info;
+            {availableWorkers.length === 0 ? (
+              <Text style={{ color: COLORS.textLight, textAlign: 'center', paddingVertical: 24 }}>
+                No workers available right now.
+              </Text>
+            ) : availableWorkers.map((worker) => {
+              const status = worker.availabilityStatus?.toLowerCase();
+              const isAvailableNow = status === 'available';
+              const isUnavailable = !status;
+              const availabilityLabel = isUnavailable
+                ? 'Availability unavailable'
+                : isAvailableNow ? 'AVAILABLE NOW' : 'FROM MONDAY';
+              const availabilityColor = isAvailableNow ? COLORS.success : COLORS.info;
+              const photoUri = worker.profilePhotoUrl || FALLBACK_AVATAR;
+              const displayRole = worker.selectedRoles?.length ? worker.selectedRoles[0] : 'Worker';
+              const displayExperience = worker.experienceYears > 0 ? `${worker.experienceYears} yrs` : 'Fresher';
+              const displayDistance = formatDistance(worker.liveLatitude, worker.liveLongitude);
 
               return (
                 <TouchableOpacity
                   key={worker.id}
                   style={styles.vibrantWorkerCard}
-                  onPress={() => handleContactWorker(worker.id)}
+                  onPress={() => handleViewProfile(worker)}
                   activeOpacity={0.9}
                 >
                   <View style={styles.workerMainInfo}>
                     <View style={styles.vibrantPhotoBox}>
-                      <Image source={{ uri: worker.photo }} style={styles.vibrantPhoto} />
-                      <View style={[styles.vibrantOnlineBadge, { backgroundColor: availabilityColor }]} />
+                      <Image source={{ uri: photoUri }} style={styles.vibrantPhoto} />
+                      <View style={[styles.vibrantOnlineBadge, { backgroundColor: isUnavailable ? COLORS.border : availabilityColor }]} />
                     </View>
 
                     <View style={styles.vibrantDetails}>
                       <View style={styles.nameRow}>
-                        <Text style={styles.vibrantWorkerName}>{worker.name}</Text>
-                        <View style={[styles.miniBadge, { backgroundColor: availabilityColor + '15' }]}>
-                          <Text style={[styles.miniBadgeText, { color: availabilityColor }]}>
-                            {availabilityStatus === 'AVAILABLE NOW' ? 'Online' : 'Mon'}
-                          </Text>
-                        </View>
+                        <Text style={styles.vibrantWorkerName}>{worker.fullName || 'Worker'}</Text>
+                        {!isUnavailable && (
+                          <View style={[styles.miniBadge, { backgroundColor: availabilityColor + '15' }]}>
+                            <Text style={[styles.miniBadgeText, { color: availabilityColor }]}>
+                              {isAvailableNow ? 'Online' : 'Mon'}
+                            </Text>
+                          </View>
+                        )}
                       </View>
-                      <Text style={styles.vibrantWorkerRole}>{worker.role}</Text>
+                      <Text style={styles.vibrantWorkerRole}>{displayRole}</Text>
 
                       <View style={styles.vibrantMetaRow}>
                         <View style={styles.vibrantMetaItem}>
                           <MaterialCommunityIcons name="briefcase-clock-outline" size={14} color={COLORS.textLight} />
-                          <Text style={styles.vibrantMetaText}>{worker.experience}</Text>
+                          <Text style={styles.vibrantMetaText}>{displayExperience}</Text>
                         </View>
                         <View style={styles.vibrantMetaItem}>
                           <MaterialCommunityIcons name="map-marker-outline" size={14} color={COLORS.textLight} />
-                          <Text style={styles.vibrantMetaText}>{worker.distance}</Text>
+                          <Text style={styles.vibrantMetaText}>{displayDistance}</Text>
                         </View>
                       </View>
                     </View>
@@ -270,13 +467,14 @@ export default function WorkersListScreen() {
                   <View style={styles.vibrantCardFooter}>
                     <TouchableOpacity
                       style={styles.ghostAction}
-                      onPress={() => handleContactWorker(worker.id)}
+                      onPress={() => handleViewProfile(worker)}
                     >
                       <Text style={styles.ghostActionText}>{t('viewProfile')}</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
-                      style={styles.vibrantAction}
-                      onPress={() => handleContactWorker(worker.id)}
+                      style={[styles.vibrantAction, contactingWorkerId === worker.id && { opacity: 0.6 }]}
+                      onPress={() => handleContactWorker(worker)}
+                      disabled={contactingWorkerId === worker.id}
                     >
                       <Text style={styles.vibrantActionText}>{t('contactWorker')}</Text>
                       <MaterialCommunityIcons name="whatsapp" size={16} color={COLORS.white} style={{ marginLeft: 4 }} />
@@ -291,8 +489,17 @@ export default function WorkersListScreen() {
     </ScrollView>
   );
 
+  const formatThreadTime = (dateStr: string | null): string => {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    const diffDays = Math.floor((Date.now() - d.getTime()) / 86400000);
+    if (diffDays === 0) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    if (diffDays === 1) return 'Yesterday';
+    return `${diffDays}d ago`;
+  };
+
   const renderChats = () => (
-    <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+    <ScrollView style={styles.content} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
       <FadeInView style={styles.floatingWorkspace}>
         <View style={styles.islandSurface}>
           <View style={styles.islandSection}>
@@ -301,33 +508,51 @@ export default function WorkersListScreen() {
               <Text style={styles.islandSectionTitle}>{t('chats')}</Text>
             </View>
 
-            {MOCK_WORKER_CHATS.map((chat) => (
-              <TouchableOpacity
-                key={chat.id}
-                style={styles.vibrantWorkerCard}
-                onPress={() => router.push({
-                  pathname: '/chat/[id]',
-                  params: { id: chat.id, name: chat.name, image: chat.image }
-                })}
-                activeOpacity={0.9}
-              >
-                <View style={styles.workerMainInfo}>
-                  <View style={styles.vibrantPhotoBox}>
-                    <Image source={{ uri: chat.image }} style={styles.vibrantPhoto} />
-                    {chat.unread > 0 && <View style={[styles.vibrantOnlineBadge, { backgroundColor: COLORS.primary }]} />}
-                  </View>
-
-                  <View style={styles.vibrantDetails}>
-                    <View style={styles.nameRow}>
-                      <Text style={styles.vibrantWorkerName}>{chat.name}</Text>
-                      <Text style={styles.chatTime}>{chat.time}</Text>
+            {chatThreads.length === 0 ? (
+              <View style={{ padding: 40, alignItems: 'center' }}>
+                <MessageCircle size={48} color={COLORS.border} />
+                <Text style={{ marginTop: 12, color: COLORS.textSecondary, textAlign: 'center' }}>
+                  No conversations yet.{'\n'}Open a worker profile and tap{'\n'}"Send Message" to start chatting.
+                </Text>
+              </View>
+            ) : chatThreads.map((thread) => {
+              // For a hirer, hirerName is set to the worker's name by the backend
+              const displayName = thread.hirerName || thread.workerName || `Worker ${thread.workerId.slice(0, 6)}`;
+              const preview = thread.lastMessagePreview || 'Tap to view messages';
+              return (
+                <TouchableOpacity
+                  key={thread.id}
+                  style={styles.vibrantWorkerCard}
+                  onPress={() => router.push({
+                    pathname: '/chat/[id]',
+                    params: { id: thread.id, name: displayName, image: FALLBACK_AVATAR }
+                  })}
+                  activeOpacity={0.9}
+                >
+                  <View style={styles.workerMainInfo}>
+                    <View style={styles.vibrantPhotoBox}>
+                      <Image source={{ uri: FALLBACK_AVATAR }} style={styles.vibrantPhoto} />
+                      {thread.unreadCount > 0 && (
+                        <View style={[styles.vibrantOnlineBadge, { backgroundColor: COLORS.primary }]} />
+                      )}
                     </View>
-                    <Text style={styles.vibrantWorkerRole}>{chat.role}</Text>
-                    <Text style={styles.chatLastMessage} numberOfLines={1}>{chat.lastMessage}</Text>
+
+                    <View style={styles.vibrantDetails}>
+                      <View style={styles.nameRow}>
+                        <Text style={styles.vibrantWorkerName}>{displayName}</Text>
+                        <Text style={styles.chatTime}>{formatThreadTime(thread.lastMessageAt)}</Text>
+                      </View>
+                      <Text style={styles.chatLastMessage} numberOfLines={1}>{preview}</Text>
+                      {thread.unreadCount > 0 && (
+                        <View style={styles.unreadBadge}>
+                          <Text style={styles.unreadText}>{thread.unreadCount}</Text>
+                        </View>
+                      )}
+                    </View>
                   </View>
-                </View>
-              </TouchableOpacity>
-            ))}
+                </TouchableOpacity>
+              );
+            })}
           </View>
         </View>
       </FadeInView>
@@ -393,12 +618,21 @@ export default function WorkersListScreen() {
                     <Text style={styles.statLabel}>Interviews</Text>
                   </View>
                 </View>
-                <View style={{ flexDirection: 'row', gap: 10 }}>
-                  <TouchableOpacity style={[styles.manageButton, { flex: 1 }]} onPress={() => router.push('/hirer/manage-job')}>
+                <View style={{ flexDirection: 'row', gap: 10, marginBottom: 6 }}>
+                  <TouchableOpacity
+                    style={[styles.manageButton, { flex: 1 }]}
+                    onPress={() => router.push({ pathname: '/hirer/job-detail', params: { jobId: job.id } })}
+                  >
+                    <Text style={styles.manageButtonText}>View Job</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[styles.manageButton, { flex: 1 }]} onPress={() => router.push({ pathname: '/hirer/manage-job', params: { jobId: job.id, jobTitle: job.title } })}>
                     <Text style={styles.manageButtonText}>Manage Job</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity style={[styles.manageButton, { flex: 1, backgroundColor: COLORS.primary }]} onPress={() => router.push('/hirer/workers-list')}>
-                    <Text style={[styles.manageButtonText, { color: COLORS.white }]}>View applicants</Text>
+                  <TouchableOpacity
+                    style={[styles.manageButton, { flex: 1, backgroundColor: COLORS.primary }]}
+                    onPress={() => router.push({ pathname: '/hirer/job-applicants', params: { jobId: job.id, jobTitle: job.title } })}
+                  >
+                    <Text style={[styles.manageButtonText, { color: COLORS.white }]}>Applicants</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -452,8 +686,8 @@ export default function WorkersListScreen() {
                 </TouchableOpacity>
               </View>
               <View style={styles.profileInfo}>
-                <Text style={styles.profileName}>Spice Garden</Text>
-                <Text style={styles.profileLocation}>Anna Nagar, Chennai</Text>
+                <Text style={styles.profileName}>{businessName || profileData?.businessName || 'Your Business'}</Text>
+                <Text style={styles.profileLocation}>{profileData?.city || ''}</Text>
                 <TouchableOpacity
                   style={styles.editProfileButton}
                   onPress={() => router.push('/hirer/restaurant-setup')}
@@ -535,35 +769,8 @@ export default function WorkersListScreen() {
 
       {/* Header Area */}
       <View style={styles.headerContainer}>
-        {/* White Top Nav */}
-        <View style={[styles.headerTopRow, { paddingTop: insets.top + 8 }]}>
-          <Image
-            source={require('@/assets/images/icon.png')}
-            style={styles.headerLogo}
-            resizeMode="contain"
-          />
-          <View style={styles.headerActionIcons}>
-            <TouchableOpacity
-              style={styles.headerIconButton}
-              onPress={() => Linking.openURL('tel:+919876543210')}
-            >
-              <Phone size={20} color={COLORS.primary} />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.headerIconButton}
-              onPress={() => router.push({ pathname: '/notifications', params: { role: 'employer' } })}
-            >
-              <Bell size={22} color={COLORS.primary} />
-              <View style={styles.headerBadge} />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.headerIconButton}
-              onPress={() => toggleMenu(true)}
-            >
-              <Menu size={22} color={COLORS.primary} />
-            </TouchableOpacity>
-          </View>
-        </View>
+        {/* White Top Nav — shared component */}
+        <TopNavBar unreadCount={unreadCount} onMenuPress={() => toggleMenu(true)} />
 
         {/* Blue Vibrant Hero */}
         <View style={styles.vibrantHeader}>
@@ -1525,5 +1732,18 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: COLORS.textSecondary,
     marginTop: 4,
+  },
+  unreadBadge: {
+    marginTop: 4,
+    alignSelf: 'flex-start',
+    backgroundColor: COLORS.primary,
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  unreadText: {
+    fontSize: 11,
+    color: COLORS.white,
+    fontWeight: '700',
   },
 });

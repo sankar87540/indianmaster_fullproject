@@ -1,0 +1,4 @@
+ALTER TABLE businesses DROP COLUMN IF EXISTS employee_count;
+ALTER TABLE businesses ALTER COLUMN city SET NOT NULL;
+ALTER TABLE businesses ALTER COLUMN state SET NOT NULL;
+ALTER TABLE businesses ALTER COLUMN business_type TYPE VARCHAR(100);

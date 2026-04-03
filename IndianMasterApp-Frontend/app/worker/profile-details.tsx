@@ -9,6 +9,7 @@ import { getProfileData, saveProfileData } from '@/utils/storage';
 import { User, Phone, Briefcase, Star, Lock, Mail, MapPin, ChevronRight } from 'lucide-react-native';
 import { useTranslation } from 'react-i18next';
 import { getWorkerProfile, updateWorkerProfile, updateUserProfile } from '@/services/workerService';
+import * as Location from 'expo-location';
 import { ApiError } from '@/services/apiClient';
 import { mapToWorkerProfilePayload } from '@/utils/workerProfileMapper';
 
@@ -100,13 +101,30 @@ export default function WorkerProfileDetailsScreen() {
         setSaveLoading(true);
         setApiError('');
         try {
-            // Sync email to the users table (separate from the worker profile)
-            if (email) {
-                await updateUserProfile({ email });
+            // Sync identity fields to the users table
+            const userUpdate: { email?: string; fullName?: string } = {};
+            if (email) userUpdate.email = email;
+            if (fullName.trim()) userUpdate.fullName = fullName.trim();
+            if (Object.keys(userUpdate).length > 0) {
+                await updateUserProfile(userUpdate);
             }
             // education state holds the free-text qualification string;
             // the mapper expects it under educationLevel
+            // Silently attempt device GPS (requires expo-location). Non-fatal if unavailable.
+            let gpsLat: number | undefined;
+            let gpsLon: number | undefined;
+            try {
+                const { status } = await Location.requestForegroundPermissionsAsync();
+                if (status === 'granted') {
+                    const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+                    gpsLat = pos.coords.latitude;
+                    gpsLon = pos.coords.longitude;
+                }
+            } catch { /* permission denied or GPS unavailable */ }
+
             const payload = mapToWorkerProfilePayload({
+                fullName,
+                mobileNumber,
                 educationLevel: education,
                 aadhaarNumber,
                 experience,
@@ -114,6 +132,8 @@ export default function WorkerProfileDetailsScreen() {
                 state,
                 address,
                 gender,
+                liveLatitude: gpsLat,
+                liveLongitude: gpsLon,
             });
             await updateWorkerProfile(payload);
             Alert.alert('Success', 'Profile details updated successfully');

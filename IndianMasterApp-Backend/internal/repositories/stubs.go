@@ -325,17 +325,22 @@ func (r *jobRepository) Create(ctx context.Context, job *models.Job) error {
 	query := `
 		INSERT INTO jobs (id, business_id, job_role, position, categories, roles, preferred_languages,
 		                  salary_min_amount, salary_max_amount, experience_min, experience_max,
-		                  vacancies, working_hours, weekly_leaves, benefits, work_type, address_text,
-		                  city, state, latitude, longitude, status, language)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+		                  vacancies, gender_preference, male_vacancies, female_vacancies, others_vacancies,
+		                  working_hours, weekly_leaves, benefits, work_type, address_text,
+		                  locality, city, state, latitude, longitude, description, availability,
+		                  status, language)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)
 		RETURNING id, created_at, updated_at
 	`
 
 	row := r.executor.QueryRowContext(ctx, query,
 		job.ID, job.BusinessID, job.JobRole, job.Position, job.Categories, job.Roles, job.PreferredLanguages,
 		job.SalaryMinAmount, job.SalaryMaxAmount,
-		job.ExperienceMin, job.ExperienceMax, job.Vacancies, job.WorkingHours, job.WeeklyLeaves,
-		job.Benefits, job.WorkType, job.AddressText, job.City, job.State, job.Latitude, job.Longitude,
+		job.ExperienceMin, job.ExperienceMax, job.Vacancies, job.GenderPreference, job.MaleVacancies, job.FemaleVacancies, job.OthersVacancies,
+		job.WorkingHours, job.WeeklyLeaves,
+		job.Benefits, job.WorkType, job.AddressText,
+		job.Locality, job.City, job.State, job.Latitude, job.Longitude,
+		job.Description, job.Availability,
 		job.Status, job.Language,
 	)
 
@@ -356,7 +361,9 @@ func (r *jobRepository) GetByID(ctx context.Context, id string) (*models.Job, er
 	query := `
 		SELECT id, business_id, job_role, position, categories, roles, preferred_languages,
 		       salary_min_amount, salary_max_amount, experience_min, experience_max,
-		       vacancies, working_hours, weekly_leaves, benefits, work_type, address_text, city, state, latitude, longitude,
+		       vacancies, gender_preference, male_vacancies, female_vacancies, others_vacancies,
+		       working_hours, weekly_leaves, benefits, work_type, address_text,
+		       locality, city, state, latitude, longitude, description, availability,
 		       status, language, is_active, created_at, updated_at
 		FROM jobs WHERE id = $1
 	`
@@ -364,8 +371,11 @@ func (r *jobRepository) GetByID(ctx context.Context, id string) (*models.Job, er
 	err := r.executor.QueryRowContext(ctx, query, id).Scan(
 		&job.ID, &job.BusinessID, &job.JobRole, &job.Position, &job.Categories, &job.Roles, &job.PreferredLanguages,
 		&job.SalaryMinAmount, &job.SalaryMaxAmount,
-		&job.ExperienceMin, &job.ExperienceMax, &job.Vacancies, &job.WorkingHours, &job.WeeklyLeaves,
-		&job.Benefits, &job.WorkType, &job.AddressText, &job.City, &job.State, &job.Latitude, &job.Longitude,
+		&job.ExperienceMin, &job.ExperienceMax, &job.Vacancies, &job.GenderPreference, &job.MaleVacancies, &job.FemaleVacancies, &job.OthersVacancies,
+		&job.WorkingHours, &job.WeeklyLeaves,
+		&job.Benefits, &job.WorkType, &job.AddressText,
+		&job.Locality, &job.City, &job.State, &job.Latitude, &job.Longitude,
+		&job.Description, &job.Availability,
 		&job.Status, &job.Language, &job.IsActive, &job.CreatedAt, &job.UpdatedAt,
 	)
 
@@ -384,7 +394,9 @@ func (r *jobRepository) GetByBusinessID(ctx context.Context, businessID string) 
 	query := `
 		SELECT id, business_id, job_role, position, categories, roles, preferred_languages,
 		       salary_min_amount, salary_max_amount, experience_min, experience_max,
-		       vacancies, working_hours, weekly_leaves, benefits, work_type, address_text, city, state, latitude, longitude,
+		       vacancies, gender_preference, male_vacancies, female_vacancies, others_vacancies,
+		       working_hours, weekly_leaves, benefits, work_type, address_text,
+		       locality, city, state, latitude, longitude, description, availability,
 		       status, language, is_active, created_at, updated_at
 		FROM jobs WHERE business_id = $1 AND is_active = TRUE
 		ORDER BY created_at DESC
@@ -402,8 +414,11 @@ func (r *jobRepository) GetByBusinessID(ctx context.Context, businessID string) 
 		err := rows.Scan(
 			&job.ID, &job.BusinessID, &job.JobRole, &job.Position, &job.Categories, &job.Roles, &job.PreferredLanguages,
 			&job.SalaryMinAmount, &job.SalaryMaxAmount,
-			&job.ExperienceMin, &job.ExperienceMax, &job.Vacancies, &job.WorkingHours, &job.WeeklyLeaves,
-			&job.Benefits, &job.WorkType, &job.AddressText, &job.City, &job.State, &job.Latitude, &job.Longitude,
+			&job.ExperienceMin, &job.ExperienceMax, &job.Vacancies, &job.GenderPreference, &job.MaleVacancies, &job.FemaleVacancies, &job.OthersVacancies,
+			&job.WorkingHours, &job.WeeklyLeaves,
+			&job.Benefits, &job.WorkType, &job.AddressText,
+			&job.Locality, &job.City, &job.State, &job.Latitude, &job.Longitude,
+			&job.Description, &job.Availability,
 			&job.Status, &job.Language, &job.IsActive, &job.CreatedAt, &job.UpdatedAt,
 		)
 		if err != nil {
@@ -424,19 +439,23 @@ func (r *jobRepository) Update(ctx context.Context, job *models.Job) error {
 		UPDATE jobs
 		SET job_role = $1, position = $2, categories = $3, roles = $4, preferred_languages = $5,
 		    salary_min_amount = $6, salary_max_amount = $7,
-		    experience_min = $8, experience_max = $9, vacancies = $10, working_hours = $11,
-		    weekly_leaves = $12, benefits = $13, work_type = $14, address_text = $15,
-		    city = $16, state = $17, latitude = $18, longitude = $19, language = $20, is_active = $21
-		WHERE id = $22
+		    experience_min = $8, experience_max = $9, vacancies = $10,
+		    gender_preference = $11, male_vacancies = $12, female_vacancies = $13, others_vacancies = $14,
+		    working_hours = $15, weekly_leaves = $16, benefits = $17, work_type = $18, address_text = $19,
+		    locality = $20, city = $21, state = $22, latitude = $23, longitude = $24,
+		    description = $25, availability = $26, language = $27, is_active = $28
+		WHERE id = $29
 		RETURNING updated_at
 	`
 
 	row := r.executor.QueryRowContext(ctx, query,
 		job.JobRole, job.Position, job.Categories, job.Roles, job.PreferredLanguages,
 		job.SalaryMinAmount, job.SalaryMaxAmount,
-		job.ExperienceMin, job.ExperienceMax, job.Vacancies, job.WorkingHours,
-		job.WeeklyLeaves, job.Benefits, job.WorkType, job.AddressText,
-		job.City, job.State, job.Latitude, job.Longitude, job.Language, job.IsActive, job.ID,
+		job.ExperienceMin, job.ExperienceMax, job.Vacancies,
+		job.GenderPreference, job.MaleVacancies, job.FemaleVacancies, job.OthersVacancies,
+		job.WorkingHours, job.WeeklyLeaves, job.Benefits, job.WorkType, job.AddressText,
+		job.Locality, job.City, job.State, job.Latitude, job.Longitude,
+		job.Description, job.Availability, job.Language, job.IsActive, job.ID,
 	)
 
 	err := row.Scan(&job.UpdatedAt)
@@ -477,7 +496,9 @@ func (r *jobRepository) ListByStatus(ctx context.Context, status string) ([]*mod
 	query := `
 		SELECT id, business_id, job_role, position, categories, roles, preferred_languages,
 		       salary_min_amount, salary_max_amount, experience_min, experience_max,
-		       vacancies, working_hours, weekly_leaves, benefits, work_type, address_text, city, state, latitude, longitude,
+		       vacancies, gender_preference, male_vacancies, female_vacancies, others_vacancies,
+		       working_hours, weekly_leaves, benefits, work_type, address_text,
+		       locality, city, state, latitude, longitude, description, availability,
 		       status, language, is_active, created_at, updated_at
 		FROM jobs WHERE status = $1 AND is_active = TRUE
 		ORDER BY created_at DESC
@@ -495,8 +516,11 @@ func (r *jobRepository) ListByStatus(ctx context.Context, status string) ([]*mod
 		err := rows.Scan(
 			&job.ID, &job.BusinessID, &job.JobRole, &job.Position, &job.Categories, &job.Roles, &job.PreferredLanguages,
 			&job.SalaryMinAmount, &job.SalaryMaxAmount,
-			&job.ExperienceMin, &job.ExperienceMax, &job.Vacancies, &job.WorkingHours, &job.WeeklyLeaves,
-			&job.Benefits, &job.WorkType, &job.AddressText, &job.City, &job.State, &job.Latitude, &job.Longitude,
+			&job.ExperienceMin, &job.ExperienceMax, &job.Vacancies, &job.GenderPreference, &job.MaleVacancies, &job.FemaleVacancies, &job.OthersVacancies,
+			&job.WorkingHours, &job.WeeklyLeaves,
+			&job.Benefits, &job.WorkType, &job.AddressText,
+			&job.Locality, &job.City, &job.State, &job.Latitude, &job.Longitude,
+			&job.Description, &job.Availability,
 			&job.Status, &job.Language, &job.IsActive, &job.CreatedAt, &job.UpdatedAt,
 		)
 		if err != nil {
@@ -516,7 +540,9 @@ func (r *jobRepository) ListByCity(ctx context.Context, city string) ([]*models.
 	query := `
 		SELECT id, business_id, job_role, position, categories, roles, preferred_languages,
 		       salary_min_amount, salary_max_amount, experience_min, experience_max,
-		       vacancies, working_hours, weekly_leaves, benefits, work_type, address_text, city, state, latitude, longitude,
+		       vacancies, gender_preference, male_vacancies, female_vacancies, others_vacancies,
+		       working_hours, weekly_leaves, benefits, work_type, address_text,
+		       locality, city, state, latitude, longitude, description, availability,
 		       status, language, is_active, created_at, updated_at
 		FROM jobs WHERE city = $1 AND is_active = TRUE
 		ORDER BY created_at DESC
@@ -534,8 +560,11 @@ func (r *jobRepository) ListByCity(ctx context.Context, city string) ([]*models.
 		err := rows.Scan(
 			&job.ID, &job.BusinessID, &job.JobRole, &job.Position, &job.Categories, &job.Roles, &job.PreferredLanguages,
 			&job.SalaryMinAmount, &job.SalaryMaxAmount,
-			&job.ExperienceMin, &job.ExperienceMax, &job.Vacancies, &job.WorkingHours, &job.WeeklyLeaves,
-			&job.Benefits, &job.WorkType, &job.AddressText, &job.City, &job.State, &job.Latitude, &job.Longitude,
+			&job.ExperienceMin, &job.ExperienceMax, &job.Vacancies, &job.GenderPreference, &job.MaleVacancies, &job.FemaleVacancies, &job.OthersVacancies,
+			&job.WorkingHours, &job.WeeklyLeaves,
+			&job.Benefits, &job.WorkType, &job.AddressText,
+			&job.Locality, &job.City, &job.State, &job.Latitude, &job.Longitude,
+			&job.Description, &job.Availability,
 			&job.Status, &job.Language, &job.IsActive, &job.CreatedAt, &job.UpdatedAt,
 		)
 		if err != nil {
@@ -549,12 +578,18 @@ func (r *jobRepository) ListByCity(ctx context.Context, city string) ([]*models.
 
 func (r *jobRepository) ListOpenJobs(ctx context.Context) ([]*models.Job, error) {
 	query := `
-		SELECT id, business_id, job_role, position, categories, roles, preferred_languages,
-		       salary_min_amount, salary_max_amount, experience_min, experience_max,
-		       vacancies, working_hours, weekly_leaves, benefits, work_type, address_text, city, state, latitude, longitude,
-		       status, language, is_active, created_at, updated_at
-		FROM jobs WHERE status = 'OPEN' AND is_active = TRUE
-		ORDER BY created_at DESC
+		SELECT j.id, j.business_id, j.job_role, j.position, j.categories, j.roles, j.preferred_languages,
+		       j.salary_min_amount, j.salary_max_amount, j.experience_min, j.experience_max,
+		       j.vacancies, j.gender_preference, j.male_vacancies, j.female_vacancies, j.others_vacancies,
+		       j.working_hours, j.weekly_leaves, j.benefits, j.work_type, j.address_text,
+		       j.locality, j.city, j.state, j.latitude, j.longitude, j.description, j.availability,
+		       j.status, j.language, j.is_active, j.created_at, j.updated_at,
+		       COALESCE(b.business_name, '') AS business_name,
+		       COALESCE(b.logo_url, '')      AS logo_url
+		FROM jobs j
+		LEFT JOIN businesses b ON b.id = j.business_id
+		WHERE j.status = 'OPEN' AND j.is_active = TRUE
+		ORDER BY j.created_at DESC
 	`
 
 	rows, err := r.executor.QueryContext(ctx, query)
@@ -569,9 +604,13 @@ func (r *jobRepository) ListOpenJobs(ctx context.Context) ([]*models.Job, error)
 		err := rows.Scan(
 			&job.ID, &job.BusinessID, &job.JobRole, &job.Position, &job.Categories, &job.Roles, &job.PreferredLanguages,
 			&job.SalaryMinAmount, &job.SalaryMaxAmount,
-			&job.ExperienceMin, &job.ExperienceMax, &job.Vacancies, &job.WorkingHours, &job.WeeklyLeaves,
-			&job.Benefits, &job.WorkType, &job.AddressText, &job.City, &job.State, &job.Latitude, &job.Longitude,
+			&job.ExperienceMin, &job.ExperienceMax, &job.Vacancies, &job.GenderPreference, &job.MaleVacancies, &job.FemaleVacancies, &job.OthersVacancies,
+			&job.WorkingHours, &job.WeeklyLeaves,
+			&job.Benefits, &job.WorkType, &job.AddressText,
+			&job.Locality, &job.City, &job.State, &job.Latitude, &job.Longitude,
+			&job.Description, &job.Availability,
 			&job.Status, &job.Language, &job.IsActive, &job.CreatedAt, &job.UpdatedAt,
+			&job.BusinessName, &job.LogoURL,
 		)
 		if err != nil {
 			return nil, errors.NewDatabaseError("failed to scan job", err)
@@ -821,6 +860,52 @@ func (r *applicationRepository) ExistsByJobAndWorker(ctx context.Context, jobID,
 	}
 
 	return exists, nil
+}
+
+func (r *applicationRepository) GetApplicantsByJobID(ctx context.Context, jobID string) ([]ApplicantRow, error) {
+	if jobID == "" {
+		return nil, errors.NewValidationError("job_id is required", nil)
+	}
+
+	query := `
+		SELECT
+			a.id,
+			a.status,
+			a.applied_at,
+			a.worker_id,
+			COALESCE(w.full_name, '')          AS full_name,
+			COALESCE(w.phone, '')              AS phone,
+			COALESCE(w.email, '')              AS email,
+			COALESCE(w.city, '')               AS city,
+			COALESCE(w.state, '')              AS state,
+			COALESCE(w.expected_salary_min, 0) AS expected_salary_min,
+			COALESCE(w.expected_salary_max, 0) AS expected_salary_max,
+			COALESCE(w.profile_photo_url, '')  AS profile_photo_url
+		FROM applications a
+		LEFT JOIN workers w ON w.user_id = a.worker_id
+		WHERE a.job_id = $1 AND a.deleted_at IS NULL
+		ORDER BY a.applied_at DESC
+	`
+
+	rows, err := r.executor.QueryContext(ctx, query, jobID)
+	if err != nil {
+		return nil, errors.NewDatabaseError("failed to fetch applicants", err)
+	}
+	defer rows.Close()
+
+	var result []ApplicantRow
+	for rows.Next() {
+		var row ApplicantRow
+		if err := rows.Scan(
+			&row.ApplicationID, &row.Status, &row.AppliedAt, &row.WorkerUserID,
+			&row.FullName, &row.Phone, &row.Email, &row.City, &row.State,
+			&row.ExpectedSalaryMin, &row.ExpectedSalaryMax, &row.ProfilePhotoURL,
+		); err != nil {
+			return nil, errors.NewDatabaseError("failed to scan applicant row", err)
+		}
+		result = append(result, row)
+	}
+	return result, rows.Err()
 }
 
 // ============= SUBSCRIPTION REPOSITORY =============

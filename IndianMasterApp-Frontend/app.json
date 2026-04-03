@@ -25,9 +25,12 @@
         "backgroundColor": "#FFFFFF"
       },
       "permissions": [
-        "android.permission.RECORD_AUDIO"
+        "android.permission.RECORD_AUDIO",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.VIBRATE"
       ],
-      "package": "com.anonymous.indianmasterhiring"
+      "package": "com.anonymous.indianmasterhiring",
+      "usesCleartextTraffic": true
     },
     "web": {
       "bundler": "metro",
@@ -36,6 +39,16 @@
     },
     "plugins": [
       "expo-router",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/MAX.jpg",
+          "color": "#FF6B35",
+          "sounds": [],
+          "androidMode": "default",
+          "androidCollapsedTitle": "Indian Master"
+        }
+      ],
       "expo-font",
       [
         "expo-image-picker",
@@ -43,7 +56,14 @@
           "photosPermission": "The app accesses your photos to let you upload your profile picture.",
           "cameraPermission": "The app accesses your camera to let you take a profile picture."
         }
-      ]
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Allow Indian Master to use your location to show distance to workers and hirers."
+        }
+      ],
+      "@react-native-community/datetimepicker"
     ],
     "experiments": {
       "typedRoutes": true

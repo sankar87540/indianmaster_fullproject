@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	apperrors "myapp/internal/errors"
 	"myapp/internal/dto"
 	"myapp/internal/models"
 	"myapp/internal/repositories"
@@ -51,10 +52,37 @@ func NewJobServiceV2(
 //  2. Invalidates the jobs feed cache
 //  3. Notifies matching workers (NEW_JOB notification)
 func (s *JobServiceV2) CreateJob(ctx context.Context, req *dto.CreateJobRequest, hirerID string) (*dto.JobResponse, error) {
+	// Resolve BusinessID from the hirer's profile when not supplied by the client
+	businessID := req.BusinessID
+	if businessID == "" {
+		biz, err := s.businessRepo.GetFirstByOwnerID(ctx, hirerID)
+		if err != nil {
+			return nil, apperrors.NewAppError(
+				apperrors.ErrBadRequest,
+				"Business profile not found. Please complete your business setup before posting a job.",
+				400,
+				nil,
+			)
+		}
+		businessID = biz.ID
+	}
+
+	// Derive JobRole from the first element of Roles when not supplied directly
+	jobRole := req.JobRole
+	if jobRole == "" && len(req.Roles) > 0 {
+		jobRole = req.Roles[0]
+	}
+	if jobRole == "" && len(req.Categories) > 0 {
+		jobRole = req.Categories[0]
+	}
+	if jobRole == "" {
+		jobRole = "General"
+	}
+
 	job := &models.Job{
 		ID:                 uuid.New().String(),
-		BusinessID:         req.BusinessID,
-		JobRole:            req.JobRole,
+		BusinessID:         businessID,
+		JobRole:            jobRole,
 		Position:           req.Position,
 		Categories:         pq.StringArray(req.Categories),
 		Roles:              pq.StringArray(req.Roles),
@@ -64,14 +92,22 @@ func (s *JobServiceV2) CreateJob(ctx context.Context, req *dto.CreateJobRequest,
 		ExperienceMin:      req.ExperienceMin,
 		ExperienceMax:      req.ExperienceMax,
 		Vacancies:          req.Vacancies,
+		GenderPreference:   req.GenderPreference,
+		MaleVacancies:      req.MaleVacancies,
+		FemaleVacancies:    req.FemaleVacancies,
+		OthersVacancies:    req.OthersVacancies,
 		WorkingHours:       req.WorkingHours,
 		WeeklyLeaves:       req.WeeklyLeaves,
 		Benefits:           pq.StringArray(req.Benefits),
 		WorkType:           req.WorkType,
 		AddressText:        req.AddressText,
+		Locality:           req.Locality,
 		City:               req.City,
 		State:              req.State,
+		Description:        req.Description,
+		Availability:       pq.StringArray(req.Availability),
 		Status:             models.JobStatusOpen,
+		Language:           "en",
 		IsActive:           true,
 	}
 
@@ -141,20 +177,33 @@ func (s *JobServiceV2) GetJobsFeed(ctx context.Context, filters map[string]inter
 	return jobs, total, nil
 }
 
-// GetJobByID returns a single job by ID
+// GetJobByID returns a single job by ID, enriched with business name and logo
 func (s *JobServiceV2) GetJobByID(ctx context.Context, jobID string) (*dto.JobResponse, error) {
 	j, err := s.jobRepo.GetByID(ctx, jobID)
 	if err != nil {
 		return nil, err
 	}
+	if biz, bizErr := s.businessRepo.GetByID(ctx, j.BusinessID); bizErr == nil {
+		j.BusinessName = biz.BusinessName
+		j.LogoURL = biz.LogoURL
+	}
 	return mapJobModelToDTO(j), nil
 }
 
-// UpdateJob updates a job in the database and invalidates relevant caches
+// UpdateJob updates a job in the database and invalidates relevant caches.
+// adminID is the authenticated hirer's user ID; ownership is verified before any update.
 func (s *JobServiceV2) UpdateJob(ctx context.Context, jobID string, req *dto.UpdateJobRequest, adminID string) (*dto.JobResponse, error) {
+	// Verify the caller owns the job before applying any changes.
+	biz, err := s.businessRepo.GetFirstByOwnerID(ctx, adminID)
+	if err != nil {
+		return nil, fmt.Errorf("hirer has no business profile")
+	}
 	job, err := s.jobRepo.GetByID(ctx, jobID)
 	if err != nil {
 		return nil, err
+	}
+	if job.BusinessID != biz.ID {
+		return nil, fmt.Errorf("ForbiddenJobAccess")
 	}
 
 	// Apply only provided (non-zero) fields
@@ -175,6 +224,18 @@ func (s *JobServiceV2) UpdateJob(ctx context.Context, jobID string, req *dto.Upd
 	}
 	if req.Vacancies != 0 {
 		job.Vacancies = req.Vacancies
+	}
+	if req.GenderPreference != "" {
+		job.GenderPreference = req.GenderPreference
+	}
+	if req.MaleVacancies != 0 {
+		job.MaleVacancies = req.MaleVacancies
+	}
+	if req.FemaleVacancies != 0 {
+		job.FemaleVacancies = req.FemaleVacancies
+	}
+	if req.OthersVacancies != 0 {
+		job.OthersVacancies = req.OthersVacancies
 	}
 	if req.WorkingHours != nil {
 		job.WorkingHours = req.WorkingHours
@@ -200,11 +261,20 @@ func (s *JobServiceV2) UpdateJob(ctx context.Context, jobID string, req *dto.Upd
 	if req.AddressText != "" {
 		job.AddressText = req.AddressText
 	}
+	if req.Locality != "" {
+		job.Locality = req.Locality
+	}
 	if req.City != "" {
 		job.City = req.City
 	}
 	if req.State != "" {
 		job.State = req.State
+	}
+	if req.Description != "" {
+		job.Description = req.Description
+	}
+	if len(req.Availability) > 0 {
+		job.Availability = pq.StringArray(req.Availability)
 	}
 
 	if err := s.jobRepo.Update(ctx, job); err != nil {
@@ -243,9 +313,15 @@ func mapJobModelToDTO(j *models.Job) *dto.JobResponse {
 	if benefits == nil {
 		benefits = []string{}
 	}
+	avail := []string(j.Availability)
+	if avail == nil {
+		avail = []string{}
+	}
 	return &dto.JobResponse{
 		ID:                 j.ID,
 		BusinessID:         j.BusinessID,
+		BusinessName:       j.BusinessName,
+		LogoURL:            j.LogoURL,
 		JobRole:            j.JobRole,
 		Position:           j.Position,
 		Categories:         cats,
@@ -256,16 +332,71 @@ func mapJobModelToDTO(j *models.Job) *dto.JobResponse {
 		ExperienceMin:      j.ExperienceMin,
 		ExperienceMax:      j.ExperienceMax,
 		Vacancies:          j.Vacancies,
+		GenderPreference:   j.GenderPreference,
+		MaleVacancies:      j.MaleVacancies,
+		FemaleVacancies:    j.FemaleVacancies,
+		OthersVacancies:    j.OthersVacancies,
 		WorkingHours:       j.WorkingHours,
 		WeeklyLeaves:       j.WeeklyLeaves,
 		Benefits:           benefits,
 		WorkType:           j.WorkType,
 		City:               j.City,
 		State:              j.State,
+		Locality:           j.Locality,
 		AddressText:        j.AddressText,
+		Latitude:           j.Latitude,
+		Longitude:          j.Longitude,
+		Description:        j.Description,
+		Availability:       avail,
 		Status:             j.Status,
 		CreatedAt:          j.CreatedAt,
 	}
+}
+
+// GetMyJobs returns all jobs posted by the hirer identified by hirerID.
+func (s *JobServiceV2) GetMyJobs(ctx context.Context, hirerID string) ([]dto.JobResponse, error) {
+	biz, err := s.businessRepo.GetFirstByOwnerID(ctx, hirerID)
+	if err != nil {
+		return nil, apperrors.NewAppError(
+			apperrors.ErrBadRequest,
+			"Business profile not found. Please complete your business setup.",
+			400,
+			nil,
+		)
+	}
+
+	jobList, err := s.jobRepo.GetByBusinessID(ctx, biz.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	jobs := make([]dto.JobResponse, len(jobList))
+	for i, j := range jobList {
+		jobs[i] = *mapJobModelToDTO(j)
+	}
+	return jobs, nil
+}
+
+// DeleteJob soft-deletes a job owned by the given hirer (sets is_active=FALSE).
+// Returns ForbiddenJobAccess error if the job does not belong to the hirer's business.
+func (s *JobServiceV2) DeleteJob(ctx context.Context, jobID, hirerUserID string) error {
+	biz, err := s.businessRepo.GetFirstByOwnerID(ctx, hirerUserID)
+	if err != nil {
+		return fmt.Errorf("hirer has no business profile")
+	}
+	job, err := s.jobRepo.GetByID(ctx, jobID)
+	if err != nil {
+		return err
+	}
+	if job.BusinessID != biz.ID {
+		return fmt.Errorf("ForbiddenJobAccess")
+	}
+	if err := s.jobRepo.Delete(ctx, jobID); err != nil {
+		return err
+	}
+	_ = s.cache.InvalidateJobsCache(ctx)
+	_ = s.cache.InvalidateSearchJobsCache(ctx)
+	return nil
 }
 
 // notifyMatchingWorkers sends NEW_JOB notifications to workers whose profile matches the job.

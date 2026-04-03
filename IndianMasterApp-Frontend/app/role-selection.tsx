@@ -6,6 +6,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import { useTranslation } from 'react-i18next';
 import { COLORS } from '@/constants/theme';
 import { sendOTP, verifyOTP } from '@/services/authService';
+import { getWorkerProfile, getHirerProfile } from '@/services/workerService';
 
 export default function RoleSelectionScreen() {
   const { t } = useTranslation();
@@ -43,9 +44,38 @@ export default function RoleSelectionScreen() {
       const backendRole = role === 'hirer' ? 'HIRER' : 'WORKER';
       await verifyOTP('+91' + phone, otp, requestId, backendRole, 'en');
       if (role === 'hirer') {
-        router.push('/hirer/restaurant-setup');
+        // Check whether this hirer already has a business profile.
+        // verifyOTP has already saved the JWT, so this call is authenticated.
+        try {
+          const hirerProfile = await getHirerProfile();
+          if (hirerProfile) {
+            // Profile exists → skip setup, go straight to the dashboard
+            router.replace('/hirer/workers-list');
+          } else {
+            // No profile yet (404 returned as null) → first-time setup
+            router.push('/hirer/restaurant-setup');
+          }
+        } catch (profileErr: any) {
+          // 401/403/500/network — surface the real error, do NOT silently redirect to setup
+          throw profileErr;
+        }
       } else {
-        router.push('/worker/education-type');
+        // Check whether this worker already has a profile in the database.
+        // verifyOTP has already saved the JWT, so this call is authenticated.
+        try {
+          await getWorkerProfile();
+          // Profile exists → skip setup, go straight to the jobs feed
+          router.replace('/worker/jobs-feed');
+        } catch (profileErr: any) {
+          console.log('getWorkerProfile error after OTP verify:', profileErr?.statusCode, profileErr?.message);
+          if (profileErr?.statusCode === 404) {
+            // No profile yet → first-time setup
+            router.push('/worker/education-type');
+          } else {
+            // 401/403/500/network — surface the real error, do NOT redirect to setup
+            throw profileErr;
+          }
+        }
       }
     } catch (e: any) {
       setError(e?.message ?? 'Invalid OTP. Please try again.');

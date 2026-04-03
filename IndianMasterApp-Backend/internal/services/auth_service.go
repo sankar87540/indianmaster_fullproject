@@ -73,7 +73,8 @@ func (s *AuthService) SendOTP(ctx context.Context, phone string) (*dto.SendOTPRe
 	}
 
 	// TODO: integrate SMS provider here (Twilio / Gupshup / AWS SNS).
-	// In non-production environments, log the OTP so the dev flow still works.
+	// In non-production environments, log the OTP value to the terminal so the
+	// dev/test flow works without a real SMS provider. Never log OTP in production.
 	if os.Getenv("APP_ENV") != "production" {
 		log.Printf("[OTP] phone=%s otp=%s requestId=%s", phone, otp, requestID)
 	}
@@ -118,10 +119,24 @@ func (s *AuthService) VerifyOTP(ctx context.Context, req *dto.VerifyOTPRequest) 
 		language = "en"
 	}
 
-	// 3. Find user by phone
+	// 3. Find user by phone.
+	// Try the exact phone string first, then normalized variants to handle users
+	// who registered before the frontend added the +91 prefix (or vice-versa).
+	// This prevents creating a second user record with a new UUID when an existing
+	// user's phone is stored in a slightly different format, which would orphan any
+	// business profile already linked to the original UUID.
 	user, err := s.userRepo.GetByPhone(ctx, req.Phone)
+	if err != nil && (strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no rows")) {
+		for _, variant := range phoneVariants(req.Phone) {
+			if u, verr := s.userRepo.GetByPhone(ctx, variant); verr == nil {
+				user = u
+				err = nil
+				break
+			}
+		}
+	}
 	if err != nil {
-		// If user not found, create a new user (Signup flow)
+		// If user not found with any phone variant, create a new user (Signup flow)
 		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no rows") {
 			user = &models.User{
 				Phone:    req.Phone,
@@ -211,6 +226,24 @@ func (s *AuthService) generateJWT(userID, role string) (string, error) {
 	}
 
 	return tokenString, nil
+}
+
+// phoneVariants returns alternate phone-number formats to try when an exact
+// lookup fails. Handles the common case where a user was originally stored
+// with a different +91 prefix convention than the current frontend sends.
+func phoneVariants(phone string) []string {
+	if strings.HasPrefix(phone, "+91") && len(phone) > 3 {
+		digits := phone[3:] // strip "+91" → 10-digit number
+		return []string{digits, "91" + digits}
+	}
+	if strings.HasPrefix(phone, "91") && len(phone) == 12 {
+		digits := phone[2:] // strip "91" → 10-digit number
+		return []string{"+91" + digits, digits}
+	}
+	if len(phone) == 10 {
+		return []string{"+91" + phone, "91" + phone}
+	}
+	return nil
 }
 
 // HashPassword generates a bcrypt hash of the password

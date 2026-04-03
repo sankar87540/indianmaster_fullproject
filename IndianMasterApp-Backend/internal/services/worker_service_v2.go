@@ -2,6 +2,12 @@ package services
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"log"
+	"strings"
+	"time"
+	"unicode"
 
 	"myapp/internal/dto"
 	"myapp/internal/models"
@@ -11,6 +17,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 )
+
+// ErrNoActiveSubscription is returned when a hirer has no active subscription.
+var ErrNoActiveSubscription = errors.New("no active subscription")
 
 // ============================================================================
 // WORKER SERVICE V2 — with Redis cache invalidation on profile updates
@@ -22,6 +31,8 @@ type WorkerServiceV2 struct {
 	userRepo         repositories.UserRepository
 	verificationRepo repositories.VerificationRepository
 	notificationRepo repositories.NotificationRepository
+	unlockRepo       repositories.HirerWorkerUnlockRepository
+	subscriptionRepo repositories.SubscriptionRepository
 	cache            *utils.CacheService
 }
 
@@ -31,6 +42,8 @@ func NewWorkerServiceV2(
 	userRepo repositories.UserRepository,
 	verificationRepo repositories.VerificationRepository,
 	notificationRepo repositories.NotificationRepository,
+	unlockRepo repositories.HirerWorkerUnlockRepository,
+	subscriptionRepo repositories.SubscriptionRepository,
 	cache *utils.CacheService,
 ) *WorkerServiceV2 {
 	return &WorkerServiceV2{
@@ -38,6 +51,8 @@ func NewWorkerServiceV2(
 		userRepo:         userRepo,
 		verificationRepo: verificationRepo,
 		notificationRepo: notificationRepo,
+		unlockRepo:       unlockRepo,
+		subscriptionRepo: subscriptionRepo,
 		cache:            cache,
 	}
 }
@@ -58,6 +73,12 @@ func (s *WorkerServiceV2) CreateWorker(ctx context.Context, req *dto.CreateWorke
 	if language == "" {
 		language = "en"
 	}
+
+	// Fetch user record to seed identity fields when the request omits them.
+	user, _ := s.userRepo.GetByID(ctx, userID)
+
+	log.Printf("[CreateWorker] userID=%s req.FullName=%q req.Phone=%q req.Email=%q",
+		userID, req.FullName, req.Phone, req.Email)
 
 	worker := &models.Worker{
 		ID:                 uuid.New().String(),
@@ -89,8 +110,30 @@ func (s *WorkerServiceV2) CreateWorker(ctx context.Context, req *dto.CreateWorke
 		Degree:             req.Degree,
 		College:            req.College,
 		AadhaarNumber:      req.AadhaarNumber,
+		LiveLatitude:       req.LiveLatitude,
+		LiveLongitude:      req.LiveLongitude,
 		IsActive:           true,
 	}
+
+	// Seed identity fields from the user record when the request omitted them.
+	// — Phone: the OTP-verified phone is always the user's real phone number.
+	// — FullName: only seed if the user record has a real (non-OTP-placeholder) name.
+	// — Email: only seed if the user record has a non-empty email.
+	// Request values always take priority; seeding only fills genuinely empty fields.
+	if user != nil {
+		if worker.Phone == "" && user.Phone != "" {
+			worker.Phone = user.Phone
+		}
+		if worker.FullName == "" && !isOTPPlaceholderName(user.FullName) {
+			worker.FullName = user.FullName
+		}
+		if worker.Email == "" && user.Email != "" {
+			worker.Email = user.Email
+		}
+	}
+
+	log.Printf("[CreateWorker] saving worker userID=%s full_name=%q phone=%q email=%q",
+		userID, worker.FullName, worker.Phone, worker.Email)
 
 	if err := s.workerRepo.Create(ctx, worker); err != nil {
 		return nil, err
@@ -99,7 +142,6 @@ func (s *WorkerServiceV2) CreateWorker(ctx context.Context, req *dto.CreateWorke
 	// Invalidate search cache since a new worker profile affects search results
 	_ = s.cache.InvalidateSearchCache(ctx)
 
-	user, _ := s.userRepo.GetByID(ctx, userID)
 	return buildWorkerProfileResponse(worker, user), nil
 }
 
@@ -124,6 +166,9 @@ func (s *WorkerServiceV2) UpdateWorkerProfile(ctx context.Context, userID string
 	if err != nil {
 		return nil, err
 	}
+
+	log.Printf("[UpdateWorkerProfile] userID=%s req.FullName=%q req.Phone=%q req.Email=%q",
+		userID, req.FullName, req.Phone, req.Email)
 
 	// Apply partial updates — only overwrite with non-zero / non-empty values
 	if req.FullName != "" {
@@ -208,9 +253,18 @@ func (s *WorkerServiceV2) UpdateWorkerProfile(ctx context.Context, userID string
 	if req.AadhaarNumber != "" {
 		worker.AadhaarNumber = req.AadhaarNumber
 	}
+	if req.LiveLatitude != nil {
+		worker.LiveLatitude = req.LiveLatitude
+	}
+	if req.LiveLongitude != nil {
+		worker.LiveLongitude = req.LiveLongitude
+	}
 	if worker.Language == "" {
 		worker.Language = "en"
 	}
+
+	log.Printf("[UpdateWorkerProfile] saving worker userID=%s full_name=%q phone=%q email=%q",
+		userID, worker.FullName, worker.Phone, worker.Email)
 
 	if err := s.workerRepo.Update(ctx, worker); err != nil {
 		return nil, err
@@ -302,6 +356,110 @@ func (s *WorkerServiceV2) GetRecommendedJobs(ctx context.Context, workerID strin
 	return result, nil
 }
 
+// ListActiveForHirer returns all active worker profiles for the hirer's Explore view.
+// Phone, email, and Aadhaar are always stripped from this listing — they require an unlock.
+func (s *WorkerServiceV2) ListActiveForHirer(ctx context.Context) ([]*dto.WorkerProfileResponse, error) {
+	workers, err := s.workerRepo.ListActive(ctx)
+	if err != nil {
+		return nil, err
+	}
+	results := make([]*dto.WorkerProfileResponse, 0, len(workers))
+	for _, w := range workers {
+		resp := buildWorkerProfileResponse(w, nil)
+		resp.Phone = ""
+		resp.Email = ""
+		resp.AadhaarNumber = ""
+		results = append(results, resp)
+	}
+	return results, nil
+}
+
+// GetWorkerPublicProfile returns a single worker's profile for hirer viewing.
+// Sensitive contact fields (phone, email, Aadhaar) are never included — use UnlockWorkerContact.
+func (s *WorkerServiceV2) GetWorkerPublicProfile(ctx context.Context, workerID string) (*dto.WorkerProfileResponse, error) {
+	worker, err := s.workerRepo.GetByID(ctx, workerID)
+	if err != nil {
+		return nil, err
+	}
+	resp := buildWorkerProfileResponse(worker, nil)
+	resp.Phone = ""
+	resp.Email = ""
+	resp.AadhaarNumber = ""
+	return resp, nil
+}
+
+// CheckWorkerUnlockStatus returns whether a hirer has already unlocked a worker's contact.
+func (s *WorkerServiceV2) CheckWorkerUnlockStatus(ctx context.Context, hirerUserID, workerID string) (bool, error) {
+	return s.unlockRepo.IsUnlocked(ctx, hirerUserID, workerID)
+}
+
+// UnlockWorkerContact verifies the hirer has an active subscription, records the unlock,
+// and returns the worker's phone number + WhatsApp URL.
+// If the worker was already unlocked, the phone is returned immediately without re-checking
+// the subscription (the hirer already paid for this contact).
+func (s *WorkerServiceV2) UnlockWorkerContact(ctx context.Context, hirerUserID, workerID string) (*dto.WorkerContactResponse, error) {
+	// 1. Check if already unlocked — honour existing unlocks regardless of subscription state.
+	alreadyUnlocked, err := s.unlockRepo.IsUnlocked(ctx, hirerUserID, workerID)
+	if err != nil {
+		return nil, err
+	}
+
+	if !alreadyUnlocked {
+		// 2. Check active subscription.
+		sub, err := s.subscriptionRepo.GetByUserID(ctx, hirerUserID)
+		if err != nil {
+			return nil, ErrNoActiveSubscription
+		}
+		if sub.Status != "ACTIVE" {
+			return nil, ErrNoActiveSubscription
+		}
+		if sub.ExpiryDate != nil && sub.ExpiryDate.Before(time.Now()) {
+			return nil, ErrNoActiveSubscription
+		}
+
+		// 3. Record the unlock.
+		unlock := &models.HirerWorkerUnlock{
+			ID:          uuid.New().String(),
+			HirerUserID: hirerUserID,
+			WorkerID:    workerID,
+		}
+		if err := s.unlockRepo.Create(ctx, unlock); err != nil {
+			return nil, err
+		}
+	}
+
+	// 4. Fetch worker for phone number.
+	worker, err := s.workerRepo.GetByID(ctx, workerID)
+	if err != nil {
+		return nil, err
+	}
+
+	phone := worker.Phone
+	return &dto.WorkerContactResponse{
+		WorkerID:    workerID,
+		Phone:       phone,
+		WhatsAppURL: buildWhatsAppURL(phone),
+		IsUnlocked:  true,
+	}, nil
+}
+
+// buildWhatsAppURL constructs a wa.me deep-link from an Indian phone number.
+// Strips non-digits and prepends 91 if only 10 digits are provided.
+func buildWhatsAppURL(phone string) string {
+	var digits strings.Builder
+	for _, c := range phone {
+		if unicode.IsDigit(c) {
+			digits.WriteRune(c)
+		}
+	}
+	cleaned := digits.String()
+	if len(cleaned) == 10 {
+		cleaned = "91" + cleaned
+	}
+	msg := "Hi%2C+I+found+your+profile+on+IndianMaster+and+I%27m+interested+in+hiring+you."
+	return fmt.Sprintf("https://wa.me/%s?text=%s", cleaned, msg)
+}
+
 // SearchWorkers searches workers based on filters
 func (s *WorkerServiceV2) SearchWorkers(ctx context.Context, filters map[string]interface{}, page, limit int) ([]*models.Worker, int64, error) {
 	workers := []*models.Worker{
@@ -318,6 +476,14 @@ func (s *WorkerServiceV2) SearchWorkers(ctx context.Context, filters map[string]
 // ============================================================================
 // HELPERS
 // ============================================================================
+
+// isOTPPlaceholderName returns true when fullName is an auto-generated OTP
+// placeholder of the form "User XXXX" (last 4 digits of the phone number).
+// These are created by auth_service.go on first sign-up and should never be
+// surfaced as the worker's real name.
+func isOTPPlaceholderName(name string) bool {
+	return strings.HasPrefix(name, "User ")
+}
 
 // toStringArray converts a []string to pq.StringArray.
 // Returns an empty array (not nil) for nil input to avoid NULL in JSON responses.
@@ -342,7 +508,11 @@ func toSlice(arr pq.StringArray) []string {
 // Computed on-the-fly so it is always accurate without a DB write.
 func computeCompletionPercentage(worker *models.Worker, user *models.User) int {
 	score := 0
-	if user != nil && user.FullName != "" {
+	effectiveName := worker.FullName
+	if effectiveName == "" && user != nil && !isOTPPlaceholderName(user.FullName) {
+		effectiveName = user.FullName
+	}
+	if effectiveName != "" {
 		score += 10
 	}
 	if worker.Gender != "" {
@@ -413,13 +583,16 @@ func buildWorkerProfileResponse(worker *models.Worker, user *models.User) *dto.W
 		Language:             worker.Language,
 		IsVerified:           false,
 		VerificationStatus:   "pending",
+		LiveLatitude:         worker.LiveLatitude,
+		LiveLongitude:        worker.LiveLongitude,
 		CreatedAt:            worker.CreatedAt,
 		UpdatedAt:            worker.UpdatedAt,
 	}
 
-	// Fall back to the user account's identity fields if the worker row is empty
+	// Fall back to the user account's identity fields if the worker row is empty.
+	// Guard against seeding OTP auto-generated placeholder names ("User XXXX").
 	if user != nil {
-		if resp.FullName == "" {
+		if resp.FullName == "" && !isOTPPlaceholderName(user.FullName) {
 			resp.FullName = user.FullName
 		}
 		if resp.Phone == "" {

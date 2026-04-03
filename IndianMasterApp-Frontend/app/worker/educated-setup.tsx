@@ -1,4 +1,6 @@
-import { View, Text, StyleSheet, TextInput, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, useWindowDimensions } from 'react-native';
+import { View, Text, StyleSheet, TextInput, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, useWindowDimensions, Modal } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import { INDIAN_STATES, getCitiesForState } from '@/constants/indianStateCities';
 import { useState, useEffect } from 'react';
 import { router } from 'expo-router';
 import AppHeader from '@/components/AppHeader';
@@ -16,12 +18,55 @@ export default function EducatedWorkerSetup() {
     const isDesktop = width >= 768;
 
     const [fullName, setFullName] = useState('');
-    const [age, setAge] = useState('');
+    const [dobDay, setDobDay] = useState('');
+    const [dobMonth, setDobMonth] = useState('');
+    const [dobYear, setDobYear] = useState('');
+    const [isDobPickerOpen, setIsDobPickerOpen] = useState(false);
+    const defaultPickerDate = (() => { const d = new Date(); d.setFullYear(d.getFullYear() - 25); return d; })();
+    const [dobPickerDate, setDobPickerDate] = useState<Date>(defaultPickerDate);
     const [mobileNumber, setMobileNumber] = useState('');
     const [email, setEmail] = useState('');
     const [gender, setGender] = useState('');
     const [address, setAddress] = useState('');
+    const [city, setCity] = useState('');
+    const [state, setState] = useState('');
+    const [isStateDropdownOpen, setIsStateDropdownOpen] = useState(false);
+    const [stateSearch, setStateSearch] = useState('');
+    const [isCityDropdownOpen, setIsCityDropdownOpen] = useState(false);
+    const [citySearch, setCitySearch] = useState('');
     const [isGenderDropdownOpen, setIsGenderDropdownOpen] = useState(false);
+
+    const DOB_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    const currentYear = new Date().getFullYear();
+
+    const calculatedAge = (() => {
+        if (!dobDay || !dobMonth || !dobYear) return '';
+        const d = parseInt(dobDay), m = parseInt(dobMonth), y = parseInt(dobYear);
+        const dob = new Date(y, m - 1, d);
+        if (isNaN(dob.getTime()) || dob.getMonth() !== m - 1) return '';
+        const today = new Date();
+        let a = today.getFullYear() - dob.getFullYear();
+        const md = today.getMonth() - dob.getMonth();
+        if (md < 0 || (md === 0 && today.getDate() < dob.getDate())) a--;
+        return (a > 0 && a < 120) ? String(a) : '';
+    })();
+
+    const dobDisplayText = (() => {
+        if (!dobDay || !dobMonth || !dobYear) return '';
+        return `${dobDay} ${DOB_MONTHS[parseInt(dobMonth) - 1]} ${dobYear}`;
+    })();
+
+    const handleDateChange = (_event: any, selectedDate?: Date) => {
+        // On Android the native dialog closes itself; hide our open flag too.
+        if (Platform.OS === 'android') setIsDobPickerOpen(false);
+        if (selectedDate) {
+            setDobPickerDate(selectedDate);
+            setDobDay(String(selectedDate.getDate()).padStart(2, '0'));
+            setDobMonth(String(selectedDate.getMonth() + 1).padStart(2, '0'));
+            setDobYear(String(selectedDate.getFullYear()));
+            setErrors(prev => ({ ...prev, age: '' }));
+        }
+    };
 
     const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -30,11 +75,19 @@ export default function EducatedWorkerSetup() {
             const data = await getProfileData();
             if (data) {
                 if (data.fullName) setFullName(data.fullName);
-                if (data.age) setAge(data.age);
+                if (data.dobDay) setDobDay(data.dobDay);
+                if (data.dobMonth) setDobMonth(data.dobMonth);
+                if (data.dobYear) setDobYear(data.dobYear);
+                if (data.dobDay && data.dobMonth && data.dobYear) {
+                    const restored = new Date(parseInt(data.dobYear), parseInt(data.dobMonth) - 1, parseInt(data.dobDay));
+                    if (!isNaN(restored.getTime())) setDobPickerDate(restored);
+                }
                 if (data.mobileNumber) setMobileNumber(data.mobileNumber);
                 if (data.email) setEmail(data.email);
                 if (data.gender) setGender(data.gender);
                 if (data.address) setAddress(data.address);
+                if (data.city) setCity(data.city);
+                if (data.state) setState(data.state);
             }
         };
         loadData();
@@ -49,7 +102,7 @@ export default function EducatedWorkerSetup() {
     const validateForm = () => {
         const newErrors: Record<string, string> = {};
         if (!fullName.trim()) newErrors.fullName = 'Full name is required';
-        if (!age.trim()) newErrors.age = 'Age is required';
+        if (!calculatedAge) newErrors.age = 'Valid date of birth is required';
         if (!mobileNumber || !/^\d{10}$/.test(mobileNumber)) newErrors.mobileNumber = 'Valid 10-digit number required';
         if (email && !/\S+@\S+\.\S+/.test(email)) newErrors.email = 'Valid email required';
         if (!gender) newErrors.gender = 'Gender is required';
@@ -64,18 +117,23 @@ export default function EducatedWorkerSetup() {
 
         await saveProfileData({
             fullName,
-            age,
+            dobDay,
+            dobMonth,
+            dobYear,
+            age: calculatedAge,
             mobileNumber,
             email,
             gender,
             address,
+            city,
+            state,
             isEducated: true,
         });
 
         router.push('/worker/profile-setup');
     };
 
-    const isFormValid = fullName.trim() && age.trim() && /^\d{10}$/.test(mobileNumber) && gender && address.trim();
+    const isFormValid = fullName.trim() && !!calculatedAge && /^\d{10}$/.test(mobileNumber) && gender && address.trim();
 
     return (
         <KeyboardAvoidingView
@@ -125,24 +183,32 @@ export default function EducatedWorkerSetup() {
                                 {errors.fullName && <Text style={styles.vibrantError}>{errors.fullName}</Text>}
                             </View>
 
-                            {/* Age */}
+                            {/* Date of Birth → Age */}
                             <View style={styles.vibrantInputRow}>
-                                <Text style={styles.modernLabel}>{t('age') || 'Age'} <Text style={styles.required}>*</Text></Text>
-                                <View style={[styles.vibrantInputBox, errors.age && styles.inputError]}>
-                                    <MaterialCommunityIcons name="calendar" size={22} color={COLORS.primary} />
-                                    <TextInput
-                                        style={styles.modernTextInput}
-                                        placeholder={t('agePlaceholder') || "Enter your age"}
-                                        placeholderTextColor={COLORS.textLight}
-                                        value={age}
-                                        onChangeText={(text) => {
-                                            setAge(text.replace(/[^0-9]/g, ''));
-                                            if (errors.age) setErrors(prev => ({ ...prev, age: '' }));
-                                        }}
-                                        keyboardType="numeric"
-                                        maxLength={2}
-                                    />
-                                </View>
+                                <Text style={styles.modernLabel}>{t('dateOfBirth') || 'Date of Birth'} <Text style={styles.required}>*</Text></Text>
+                                <TouchableOpacity
+                                    style={[styles.vibrantSelectBox, errors.age && styles.inputError]}
+                                    onPress={() => {
+                                        setIsDobPickerOpen(true);
+                                        if (errors.age) setErrors(prev => ({ ...prev, age: '' }));
+                                    }}
+                                    activeOpacity={0.8}
+                                >
+                                    <View style={styles.vibrantSelectLeft}>
+                                        <View style={styles.vibrantIconCircle}>
+                                            <MaterialCommunityIcons name="calendar" size={20} color={COLORS.primary} />
+                                        </View>
+                                        <Text style={[styles.vibrantSelectText, !dobDisplayText && styles.placeholderText]}>
+                                            {dobDisplayText || (t('dobPlaceholder') || 'Select date of birth')}
+                                        </Text>
+                                    </View>
+                                    <Feather name="chevron-down" size={20} color={COLORS.textSecondary} />
+                                </TouchableOpacity>
+                                {!!calculatedAge && (
+                                    <Text style={{ marginTop: 6, marginLeft: 12, fontSize: 13, color: COLORS.primary, fontWeight: '700' }}>
+                                        Age: {calculatedAge} years
+                                    </Text>
+                                )}
                                 {errors.age && <Text style={styles.vibrantError}>{errors.age}</Text>}
                             </View>
 
@@ -247,11 +313,10 @@ export default function EducatedWorkerSetup() {
 
                             {/* Location / Address */}
                             <View style={styles.vibrantInputRow}>
-                                <Text style={styles.modernLabel}>{t('address') || 'Location'} <Text style={styles.required}>*</Text></Text>
-                                <View style={[styles.vibrantInputBox, errors.address && styles.inputError]}>
-                                    <Feather name="map-pin" size={22} color={COLORS.primary} />
+                                <Text style={styles.modernLabel}>{t('address') || 'Address'} <Text style={styles.required}>*</Text></Text>
+                                <View style={[styles.vibrantInputBox, { borderColor: '#CBD5E1', minHeight: 90, alignItems: 'flex-start', paddingVertical: 14 }, errors.address && styles.inputError]}>
                                     <TextInput
-                                        style={styles.modernTextInput}
+                                        style={[styles.modernTextInput, { marginLeft: 0, textAlignVertical: 'top' }]}
                                         placeholder={t('addressPlaceholderProfile') || "Enter your location"}
                                         placeholderTextColor={COLORS.textLight}
                                         value={address}
@@ -263,6 +328,40 @@ export default function EducatedWorkerSetup() {
                                     />
                                 </View>
                                 {errors.address && <Text style={styles.vibrantError}>{errors.address}</Text>}
+                            </View>
+
+                            {/* State */}
+                            <View style={styles.vibrantInputRow}>
+                                <Text style={styles.modernLabel}>{t('state') || 'State'}</Text>
+                                <TouchableOpacity
+                                    style={[styles.vibrantSelectBox, { minHeight: 50 }]}
+                                    onPress={() => { setStateSearch(''); setIsStateDropdownOpen(true); }}
+                                    activeOpacity={0.8}
+                                >
+                                    <Text style={[styles.modernTextInput, { flex: 1, color: state ? COLORS.text : COLORS.textLight }]} numberOfLines={1}>
+                                        {state || (t('statePlaceholder') || 'Select State')}
+                                    </Text>
+                                    <Feather name="chevron-down" size={18} color={COLORS.textLight} />
+                                </TouchableOpacity>
+                            </View>
+
+                            {/* City */}
+                            <View style={styles.vibrantInputRow}>
+                                <Text style={styles.modernLabel}>{t('city') || 'City'}</Text>
+                                <TouchableOpacity
+                                    style={[styles.vibrantSelectBox, { minHeight: 50, opacity: state ? 1 : 0.5 }]}
+                                    onPress={() => {
+                                        if (!state) return;
+                                        setCitySearch('');
+                                        setIsCityDropdownOpen(true);
+                                    }}
+                                    activeOpacity={state ? 0.8 : 1}
+                                >
+                                    <Text style={[styles.modernTextInput, { flex: 1, color: city ? COLORS.text : COLORS.textLight }]} numberOfLines={1}>
+                                        {city || (state ? (t('cityPlaceholder') || 'Select City') : (t('selectStateFirst') || 'Select State first'))}
+                                    </Text>
+                                    <Feather name="chevron-down" size={18} color={COLORS.textLight} />
+                                </TouchableOpacity>
                             </View>
                         </View>
                     </View>
@@ -277,6 +376,192 @@ export default function EducatedWorkerSetup() {
                     disabled={!isFormValid}
                 />
             </View>
+
+            {/* DOB Date Picker — native platform picker */}
+            {isDobPickerOpen && Platform.OS === 'android' && (
+                <DateTimePicker
+                    value={dobPickerDate}
+                    mode="date"
+                    display="spinner"
+                    onChange={handleDateChange}
+                    maximumDate={new Date(currentYear - 15, 11, 31)}
+                    minimumDate={new Date(currentYear - 85, 0, 1)}
+                />
+            )}
+            <Modal
+                visible={isDobPickerOpen && Platform.OS === 'ios'}
+                animationType="slide"
+                transparent={true}
+                onRequestClose={() => setIsDobPickerOpen(false)}
+            >
+                <View style={styles.modalOverlay}>
+                    <View style={styles.dobPickerSheet}>
+                        <View style={styles.dobPickerSheetHeader}>
+                            <Text style={styles.modalTitle}>{t('dateOfBirth') || 'Date of Birth'}</Text>
+                            <TouchableOpacity onPress={() => setIsDobPickerOpen(false)}>
+                                <Text style={styles.dobPickerDoneText}>Done</Text>
+                            </TouchableOpacity>
+                        </View>
+                        <DateTimePicker
+                            value={dobPickerDate}
+                            mode="date"
+                            display="spinner"
+                            onChange={handleDateChange}
+                            maximumDate={new Date(currentYear - 15, 11, 31)}
+                            minimumDate={new Date(currentYear - 85, 0, 1)}
+                            style={{ width: '100%' }}
+                        />
+                    </View>
+                </View>
+            </Modal>
+
+            {/* State Dropdown Modal */}
+            <Modal
+                visible={isStateDropdownOpen}
+                animationType="slide"
+                transparent={true}
+                onRequestClose={() => { setIsStateDropdownOpen(false); setStateSearch(''); }}
+            >
+                <View style={styles.modalOverlay}>
+                    <View style={[styles.modalContent, { height: '80%' }]}>
+                        <View style={styles.modalHeader}>
+                            <View>
+                                <Text style={styles.modalTitle}>{t('state') || 'State'}</Text>
+                                <Text style={styles.modalSubtitle}>{state || (t('noneSelected') || 'None selected')}</Text>
+                            </View>
+                            <TouchableOpacity onPress={() => { setIsStateDropdownOpen(false); setStateSearch(''); }} style={styles.closeButton}>
+                                <Feather name="x" size={24} color={COLORS.secondary} />
+                            </TouchableOpacity>
+                        </View>
+                        <View style={styles.modalSearchContainer}>
+                            <Feather name="search" size={16} color={COLORS.textLight} style={{ marginRight: 8 }} />
+                            <TextInput
+                                style={styles.modalSearchInput}
+                                placeholder={t('searchState') || 'Search state...'}
+                                placeholderTextColor={COLORS.textLight}
+                                value={stateSearch}
+                                onChangeText={setStateSearch}
+                                autoFocus
+                            />
+                        </View>
+                        <ScrollView showsVerticalScrollIndicator={false}>
+                            {INDIAN_STATES.filter(s => s.toLowerCase().includes(stateSearch.toLowerCase())).length === 0 && (
+                                <Text style={{ textAlign: 'center', color: COLORS.textLight, padding: 24 }}>
+                                    {t('noStateFound') || 'No state found'}
+                                </Text>
+                            )}
+                            {INDIAN_STATES.filter(s => s.toLowerCase().includes(stateSearch.toLowerCase())).map((stateName) => {
+                                const isSelected = state === stateName;
+                                return (
+                                    <TouchableOpacity
+                                        key={stateName}
+                                        style={[styles.modalItem, isSelected && styles.modalItemSelected]}
+                                        onPress={() => {
+                                            setState(stateName);
+                                            const newCities = getCitiesForState(stateName);
+                                            if (city && !newCities.includes(city)) setCity('');
+                                            setIsStateDropdownOpen(false);
+                                        }}
+                                    >
+                                        <View style={styles.dropdownItemContent}>
+                                            <View style={{
+                                                width: 22,
+                                                height: 22,
+                                                borderRadius: 11,
+                                                borderWidth: 2,
+                                                borderColor: isSelected ? COLORS.primary : COLORS.border,
+                                                backgroundColor: isSelected ? COLORS.primary : 'transparent',
+                                                marginRight: 12,
+                                                alignItems: 'center',
+                                                justifyContent: 'center'
+                                            }}>
+                                                {isSelected && <Feather name="check" size={14} color={COLORS.white} />}
+                                            </View>
+                                            <Text style={[styles.modalItemText, isSelected && styles.modalItemTextSelected]}>
+                                                {stateName}
+                                            </Text>
+                                        </View>
+                                    </TouchableOpacity>
+                                );
+                            })}
+                        </ScrollView>
+                    </View>
+                </View>
+            </Modal>
+
+            {/* City Dropdown Modal */}
+            <Modal
+                visible={isCityDropdownOpen}
+                animationType="slide"
+                transparent={true}
+                onRequestClose={() => { setIsCityDropdownOpen(false); setCitySearch(''); }}
+            >
+                <View style={styles.modalOverlay}>
+                    <View style={[styles.modalContent, { height: '80%' }]}>
+                        <View style={styles.modalHeader}>
+                            <View>
+                                <Text style={styles.modalTitle}>{t('city') || 'City'}</Text>
+                                <Text style={styles.modalSubtitle}>{state}</Text>
+                            </View>
+                            <TouchableOpacity onPress={() => { setIsCityDropdownOpen(false); setCitySearch(''); }} style={styles.closeButton}>
+                                <Feather name="x" size={24} color={COLORS.secondary} />
+                            </TouchableOpacity>
+                        </View>
+                        <View style={styles.modalSearchContainer}>
+                            <Feather name="search" size={16} color={COLORS.textLight} style={{ marginRight: 8 }} />
+                            <TextInput
+                                style={styles.modalSearchInput}
+                                placeholder={t('searchCity') || 'Search city...'}
+                                placeholderTextColor={COLORS.textLight}
+                                value={citySearch}
+                                onChangeText={setCitySearch}
+                                autoFocus
+                            />
+                        </View>
+                        <ScrollView showsVerticalScrollIndicator={false}>
+                            {getCitiesForState(state).filter(c => c.toLowerCase().includes(citySearch.toLowerCase())).length === 0 && (
+                                <Text style={{ textAlign: 'center', color: COLORS.textLight, padding: 24 }}>
+                                    {t('noCityFound') || 'No city found'}
+                                </Text>
+                            )}
+                            {getCitiesForState(state)
+                                .filter(c => c.toLowerCase().includes(citySearch.toLowerCase()))
+                                .map((cityName) => {
+                                    const isSelected = city === cityName;
+                                    return (
+                                        <TouchableOpacity
+                                            key={cityName}
+                                            style={[styles.modalItem, isSelected && styles.modalItemSelected]}
+                                            onPress={() => {
+                                                setCity(cityName);
+                                                setIsCityDropdownOpen(false);
+                                            }}
+                                        >
+                                            <View style={styles.dropdownItemContent}>
+                                                <View style={{
+                                                    width: 22,
+                                                    height: 22,
+                                                    borderRadius: 11,
+                                                    borderWidth: 2,
+                                                    borderColor: isSelected ? COLORS.primary : COLORS.border,
+                                                    backgroundColor: isSelected ? COLORS.primary : 'transparent',
+                                                    marginRight: 12,
+                                                    alignItems: 'center',
+                                                    justifyContent: 'center'
+                                                }}>
+                                                    {isSelected && <Feather name="check" size={14} color={COLORS.white} />}
+                                                </View>
+                                                <Text style={[styles.modalItemText, isSelected && styles.modalItemTextSelected]}>
+                                                    {cityName}
+                                                </Text>
+                                            </View>
+                                        </TouchableOpacity>
+                                    );
+                                })}
+                        </ScrollView>
+                    </View>
+                </View>
+            </Modal>
         </KeyboardAvoidingView>
     );
 }
@@ -487,5 +772,97 @@ const styles = StyleSheet.create({
         paddingBottom: Platform.OS === 'ios' ? 40 : 25,
         borderTopWidth: 1,
         borderTopColor: '#E5E7EB',
+    },
+    dobPickerSheet: {
+        backgroundColor: COLORS.white,
+        borderTopLeftRadius: 30,
+        borderTopRightRadius: 30,
+        paddingBottom: 32,
+    },
+    dobPickerSheetHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingHorizontal: 24,
+        paddingVertical: 18,
+        borderBottomWidth: 1,
+        borderBottomColor: COLORS.borderLight,
+    },
+    dobPickerDoneText: {
+        fontSize: 16,
+        fontWeight: '700',
+        color: COLORS.primary,
+    },
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        justifyContent: 'flex-end',
+    },
+    modalContent: {
+        backgroundColor: COLORS.white,
+        borderTopLeftRadius: 30,
+        borderTopRightRadius: 30,
+        paddingBottom: 40,
+    },
+    modalHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: 24,
+        borderBottomWidth: 1,
+        borderBottomColor: COLORS.borderLight,
+    },
+    modalTitle: {
+        fontSize: 20,
+        fontWeight: '800',
+        color: COLORS.secondary,
+    },
+    modalSubtitle: {
+        fontSize: 14,
+        color: COLORS.primary,
+        fontWeight: '600',
+        marginTop: 2,
+    },
+    closeButton: {
+        padding: 4,
+    },
+    modalSearchContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 16,
+        backgroundColor: '#F3F4F6',
+        margin: 16,
+        borderRadius: 16,
+    },
+    modalSearchInput: {
+        flex: 1,
+        fontSize: 14,
+        color: COLORS.secondary,
+        marginLeft: 8,
+    },
+    modalItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 16,
+        paddingHorizontal: 16,
+        borderRadius: 16,
+        marginBottom: 4,
+    },
+    modalItemSelected: {
+        backgroundColor: COLORS.primaryLight,
+    },
+    modalItemText: {
+        fontSize: 16,
+        color: COLORS.secondary,
+        fontWeight: '600',
+    },
+    modalItemTextSelected: {
+        color: COLORS.primary,
+        fontWeight: '700',
+    },
+    dropdownItemContent: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
     },
 });

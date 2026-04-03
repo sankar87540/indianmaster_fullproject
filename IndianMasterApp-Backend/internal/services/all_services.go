@@ -2,7 +2,11 @@ package services
 
 import (
 	"context"
+	"fmt"
+	"strings"
+	"time"
 
+	apperrors "myapp/internal/errors"
 	"myapp/internal/dto"
 	"myapp/internal/models"
 	"myapp/internal/repositories"
@@ -312,11 +316,14 @@ func (s *ApplicationService) UpdateApplicationStatus(ctx context.Context, applic
 // ============================================================================
 
 type ChatService struct {
-	chatRepo repositories.ChatRepository
+	chatRepo        repositories.ChatRepository
+	notificationSvc *NotificationServiceV2
+	userRepo        repositories.UserRepository
+	businessRepo    repositories.BusinessRepository
 }
 
-func NewChatService(chatRepo repositories.ChatRepository) *ChatService {
-	return &ChatService{chatRepo: chatRepo}
+func NewChatService(chatRepo repositories.ChatRepository, notificationSvc *NotificationServiceV2, userRepo repositories.UserRepository, businessRepo repositories.BusinessRepository) *ChatService {
+	return &ChatService{chatRepo: chatRepo, notificationSvc: notificationSvc, userRepo: userRepo, businessRepo: businessRepo}
 }
 
 func buildChatThreadDTO(t *models.ChatThread) *dto.ChatThreadResponse {
@@ -329,9 +336,15 @@ func buildChatThreadDTO(t *models.ChatThread) *dto.ChatThreadResponse {
 		IsArchived:         t.IsArchived,
 		UnreadCount:        t.UnreadCount,
 		HirerName:          t.HirerName,
+		WorkerName:         t.WorkerName,
 		LastMessagePreview: t.LastMessagePreview,
 		CreatedAt:          t.CreatedAt,
 	}
+}
+
+// GetThreadByID returns a chat thread by its ID for participant validation.
+func (s *ChatService) GetThreadByID(ctx context.Context, threadID string) (*models.ChatThread, error) {
+	return s.chatRepo.GetChatThreadByID(ctx, threadID)
 }
 
 func (s *ChatService) GetOrCreateChatThread(ctx context.Context, workerID, hirerID, jobID string) (*dto.ChatThreadResponse, error) {
@@ -358,36 +371,114 @@ func (s *ChatService) GetOrCreateChatThread(ctx context.Context, workerID, hirer
 }
 
 func (s *ChatService) SendMessage(ctx context.Context, threadID, senderID string, req *dto.SendChatMessageRequest) (*dto.ChatMessageResponse, error) {
+	// Validate reply_to: if provided, the target must belong to the same thread.
+	var replyToID *string
+	var replyToText *string
+	var replyToSenderID *string
+	if req.ReplyToMessageID != "" {
+		original, err := s.chatRepo.GetChatMessageByID(ctx, req.ReplyToMessageID)
+		if err != nil || original.ThreadID != threadID {
+			return nil, fmt.Errorf("reply_to_message_id not found in this thread")
+		}
+		replyToID = &req.ReplyToMessageID
+		replyToText = &original.MessageText
+		replyToSenderID = &original.SenderID
+	}
+
 	msg := &models.ChatMessage{
-		ID:             uuid.New().String(),
-		ThreadID:       threadID,
-		SenderID:       senderID,
-		MessageText:    req.MessageText,
-		AttachmentURLs: req.AttachmentURLs,
+		ID:               uuid.New().String(),
+		ThreadID:         threadID,
+		SenderID:         senderID,
+		MessageText:      req.MessageText,
+		AttachmentURLs:   req.AttachmentURLs,
+		ReplyToMessageID: replyToID,
 	}
 	if err := s.chatRepo.CreateChatMessage(ctx, msg); err != nil {
 		return nil, err
 	}
+	// Update thread's last_message_at so the conversation list sorts correctly.
+	// Non-fatal — message is already persisted.
+	_ = s.chatRepo.UpdateChatThreadLastMessage(ctx, threadID)
+	// Update caller's last_seen for presence tracking. Fire-and-forget.
+	_ = s.chatRepo.UpdateUserLastSeen(ctx, senderID)
+	// Notify the other participant. Fire-and-forget — never blocks or fails the send.
+	if s.notificationSvc != nil {
+		go func() {
+			thread, err := s.chatRepo.GetChatThreadByID(context.Background(), threadID)
+			if err != nil {
+				return
+			}
+			receiverID := thread.HirerID
+			if senderID == thread.HirerID {
+				receiverID = thread.WorkerID
+			}
+			// Resolve the sender's display name for the notification title.
+			// For hirers, prefer the business name (same as what workers see in chat
+			// thread list). Fall back to user full_name, then "Someone".
+			senderName := "Someone"
+			if s.userRepo != nil {
+				if sender, err := s.userRepo.GetByID(context.Background(), senderID); err == nil {
+					senderName = sender.FullName // may be placeholder "User XXXX"
+					if sender.Role == "HIRER" && s.businessRepo != nil {
+						if biz, berr := s.businessRepo.GetFirstByOwnerID(context.Background(), senderID); berr == nil {
+							if biz.BusinessName != "" {
+								senderName = biz.BusinessName
+							}
+						}
+					}
+				}
+			}
+			preview := msg.MessageText
+			if len(preview) > 80 {
+				preview = preview[:80] + "…"
+			}
+			// UpsertChatNotification groups all messages in the same thread under
+			// a single notification entry, incrementing unread_count rather than
+			// inserting a new row every time. This mirrors WhatsApp-style grouping.
+			_ = s.notificationSvc.UpsertChatNotification(
+				context.Background(),
+				receiverID,
+				threadID,
+				senderName,
+				preview,
+			)
+		}()
+	}
+
 	attachments := []string(msg.AttachmentURLs)
 	if attachments == nil {
 		attachments = []string{}
 	}
 	return &dto.ChatMessageResponse{
-		ID:             msg.ID,
-		ThreadID:       msg.ThreadID,
-		SenderID:       msg.SenderID,
-		MessageText:    msg.MessageText,
-		AttachmentURLs: attachments,
-		IsRead:         false,
-		CreatedAt:      msg.CreatedAt,
+		ID:               msg.ID,
+		ThreadID:         msg.ThreadID,
+		SenderID:         msg.SenderID,
+		MessageText:      msg.MessageText,
+		AttachmentURLs:   attachments,
+		IsRead:           false,
+		ReplyToMessageID: replyToID,
+		ReplyToText:      replyToText,
+		ReplyToSenderID:  replyToSenderID,
+		CreatedAt:        msg.CreatedAt,
 	}, nil
 }
 
-func (s *ChatService) GetChatMessages(ctx context.Context, threadID string, page, limit int) ([]dto.ChatMessageResponse, int64, error) {
+// GetChatMessages fetches paginated messages and marks them as delivered for the requester.
+// requesterID is used to fire-and-forget delivery marking (single→double tick transition).
+func (s *ChatService) GetChatMessages(ctx context.Context, threadID, requesterID string, page, limit int) ([]dto.ChatMessageResponse, int64, error) {
 	msgs, total, err := s.chatRepo.GetChatMessages(ctx, threadID, page, limit)
 	if err != nil {
 		return nil, 0, err
 	}
+
+	// Mark incoming messages as delivered asynchronously.
+	// This is what promotes single tick → double tick for the sender.
+	if requesterID != "" {
+		go func() {
+			_ = s.chatRepo.MarkThreadMessagesAsDelivered(context.Background(), threadID, requesterID)
+		}()
+	}
+
 	result := make([]dto.ChatMessageResponse, 0, len(msgs))
 	for _, m := range msgs {
 		attachments := []string(m.AttachmentURLs)
@@ -395,21 +486,41 @@ func (s *ChatService) GetChatMessages(ctx context.Context, threadID string, page
 			attachments = []string{}
 		}
 		result = append(result, dto.ChatMessageResponse{
-			ID:             m.ID,
-			ThreadID:       m.ThreadID,
-			SenderID:       m.SenderID,
-			MessageText:    m.MessageText,
-			AttachmentURLs: attachments,
-			IsRead:         m.IsRead,
-			ReadAt:         m.ReadAt,
-			CreatedAt:      m.CreatedAt,
+			ID:               m.ID,
+			ThreadID:         m.ThreadID,
+			SenderID:         m.SenderID,
+			MessageText:      m.MessageText,
+			AttachmentURLs:   attachments,
+			IsRead:           m.IsRead,
+			ReadAt:           m.ReadAt,
+			DeliveredAt:      m.DeliveredAt,
+			ReplyToMessageID: m.ReplyToMessageID,
+			ReplyToText:      m.ReplyToText,
+			ReplyToSenderID:  m.ReplyToSenderID,
+			CreatedAt:        m.CreatedAt,
 		})
 	}
 	return result, total, nil
 }
 
 func (s *ChatService) MarkThreadAsRead(ctx context.Context, threadID, userID string) error {
+	// Update caller's last_seen — they're active. Fire-and-forget.
+	_ = s.chatRepo.UpdateUserLastSeen(ctx, userID)
 	return s.chatRepo.MarkThreadMessagesAsRead(ctx, threadID, userID)
+}
+
+// GetThreadPresence returns whether the OTHER participant is online.
+// A user is considered online if their last_seen is within 5 minutes.
+func (s *ChatService) GetThreadPresence(ctx context.Context, threadID, callerID string) (*dto.PresenceResponse, error) {
+	lastSeen, err := s.chatRepo.GetOtherUserPresence(ctx, threadID, callerID)
+	if err != nil {
+		return nil, err
+	}
+	isOnline := false
+	if lastSeen != nil {
+		isOnline = time.Since(*lastSeen) < 5*time.Minute
+	}
+	return &dto.PresenceResponse{IsOnline: isOnline, LastSeen: lastSeen}, nil
 }
 
 func (s *ChatService) GetMyThreads(ctx context.Context, userID string, archived bool, page, limit int) ([]dto.ChatThreadResponse, int64, error) {
@@ -763,6 +874,120 @@ func (s *BusinessService) ListBusinessesByCityWithPagination(ctx context.Context
 	total := int64(200)
 
 	return businesses, total, nil
+}
+
+// GetMyBusiness returns the hirer's business profile by their user ID.
+// Returns a not-found error (404) if no profile exists yet.
+func (s *BusinessService) GetMyBusiness(ctx context.Context, ownerID string) (*dto.HirerProfileResponse, error) {
+	business, err := s.businessRepo.GetFirstByOwnerID(ctx, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	return buildHirerProfileResponse(business), nil
+}
+
+// UpsertMyBusiness creates or updates the hirer's business profile.
+// ownerID is always taken from the JWT — never from the request body.
+func (s *BusinessService) UpsertMyBusiness(ctx context.Context, ownerID string, req *dto.HirerProfileRequest) (*dto.HirerProfileResponse, error) {
+	businessType := strings.Join(req.BusinessTypes, ",")
+
+	existing, err := s.businessRepo.GetFirstByOwnerID(ctx, ownerID)
+
+	if err != nil {
+		// Only treat as "create new" when the record genuinely doesn't exist
+		appErr, ok := err.(*apperrors.AppError)
+		if !ok || appErr.Code != apperrors.ErrNotFound {
+			return nil, err
+		}
+		// Create new business profile
+		business := &models.Business{
+			ID:            uuid.New().String(),
+			OwnerID:       ownerID,
+			BusinessName:  req.BusinessName,
+			OwnerName:     req.OwnerName,
+			ContactRole:   req.ContactRole,
+			BusinessType:  businessType,
+			Email:         req.Email,
+			MobileNumber:  req.MobileNumber,
+			FSAILicense:   req.FSSAILicense,
+			GSTNumber:     req.GSTNumber,
+			EmployeeCount: req.EmployeeCount,
+			City:          req.City,
+			State:         req.State,
+			Latitude:      req.Latitude,
+			Longitude:     req.Longitude,
+			IsActive:      true,
+			Language:      "en",
+		}
+		if err := s.businessRepo.Create(ctx, business); err != nil {
+			return nil, err
+		}
+		return buildHirerProfileResponse(business), nil
+	}
+
+	// Update existing profile
+	existing.BusinessName = req.BusinessName
+	existing.OwnerName = req.OwnerName
+	existing.ContactRole = req.ContactRole
+	existing.BusinessType = businessType
+	existing.Email = req.Email
+	existing.MobileNumber = req.MobileNumber
+	existing.FSAILicense = req.FSSAILicense
+	existing.GSTNumber = req.GSTNumber
+	existing.EmployeeCount = req.EmployeeCount
+	if req.City != "" {
+		existing.City = req.City
+	}
+	if req.State != "" {
+		existing.State = req.State
+	}
+	if req.Latitude != 0 {
+		existing.Latitude = req.Latitude
+	}
+	if req.Longitude != 0 {
+		existing.Longitude = req.Longitude
+	}
+	if err := s.businessRepo.Update(ctx, existing); err != nil {
+		return nil, err
+	}
+	return buildHirerProfileResponse(existing), nil
+}
+
+// UpdateMyBusinessLogo sets logo_url on the hirer's business profile.
+func (s *BusinessService) UpdateMyBusinessLogo(ctx context.Context, ownerID string, logoURL string) error {
+	existing, err := s.businessRepo.GetFirstByOwnerID(ctx, ownerID)
+	if err != nil {
+		return err
+	}
+	existing.LogoURL = logoURL
+	return s.businessRepo.Update(ctx, existing)
+}
+
+func buildHirerProfileResponse(b *models.Business) *dto.HirerProfileResponse {
+	var types []string
+	if b.BusinessType != "" {
+		types = strings.Split(b.BusinessType, ",")
+	}
+	return &dto.HirerProfileResponse{
+		ID:            b.ID,
+		OwnerID:       b.OwnerID,
+		BusinessName:  b.BusinessName,
+		OwnerName:     b.OwnerName,
+		ContactRole:   b.ContactRole,
+		BusinessTypes: types,
+		Email:         b.Email,
+		MobileNumber:  b.MobileNumber,
+		FSSAILicense:  b.FSAILicense,
+		GSTNumber:     b.GSTNumber,
+		EmployeeCount: b.EmployeeCount,
+		LogoURL:       b.LogoURL,
+		City:          b.City,
+		State:         b.State,
+		Latitude:      b.Latitude,
+		Longitude:     b.Longitude,
+		CreatedAt:     b.CreatedAt,
+		UpdatedAt:     b.UpdatedAt,
+	}
 }
 
 // ============================================================================

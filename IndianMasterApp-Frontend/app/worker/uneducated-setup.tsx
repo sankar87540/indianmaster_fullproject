@@ -8,9 +8,10 @@ import { COLORS, SHADOWS, SPACING } from '@/constants/theme';
 import FadeInView from '@/components/FadeInView';
 import { useTranslation } from 'react-i18next';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
-import { saveProfileData } from '@/utils/storage';
+import { saveProfileData, getProfileData } from '@/utils/storage';
 import { StatusBar } from 'expo-status-bar';
 import { createWorkerProfile, updateWorkerProfile, updateUserProfile } from '@/services/workerService';
+import * as Location from 'expo-location';
 import { mapToWorkerProfilePayload } from '@/utils/workerProfileMapper';
 import { ApiError } from '@/services/apiClient';
 
@@ -39,10 +40,28 @@ export default function UneducatedWorkerSetup() {
         setLoading(true);
         setApiError('');
         try {
+            // Include mobileNumber from AsyncStorage (saved during OTP verification)
+            const stored = await getProfileData();
+            // Silently attempt device GPS (requires expo-location). Non-fatal if unavailable.
+            let gpsLat: number | undefined;
+            let gpsLon: number | undefined;
+            try {
+                const { status } = await Location.requestForegroundPermissionsAsync();
+                if (status === 'granted') {
+                    const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+                    gpsLat = pos.coords.latitude;
+                    gpsLon = pos.coords.longitude;
+                }
+            } catch { /* permission denied or GPS unavailable */ }
+
             const payload = mapToWorkerProfilePayload({
+                fullName,
+                mobileNumber: stored?.mobileNumber,
                 city,
                 selectedRoles: selectedRole ? [selectedRole] : [],
                 isEducated: false,
+                liveLatitude: gpsLat,
+                liveLongitude: gpsLon,
             });
             try {
                 await createWorkerProfile(payload);

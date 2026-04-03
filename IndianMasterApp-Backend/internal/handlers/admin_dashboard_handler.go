@@ -38,7 +38,7 @@ func (h *AdminDashboardHandler) GetAdminStats(c *gin.Context) {
 	// Get admin stats
 	stats, err := h.adminDashboardService.GetAdminStats(c.Request.Context(), &req)
 	if err != nil {
-		dto.InternalServerErrorResponse(c, "Failed to retrieve admin statistics", err.Error())
+		internalError(c, "Failed to retrieve admin statistics", err)
 		return
 	}
 
@@ -74,7 +74,7 @@ func (h *AdminDashboardHandler) GetAuditLogs(c *gin.Context) {
 	// Get audit logs
 	auditLogs, err := h.adminDashboardService.GetAuditLogs(c.Request.Context(), &req, pagination)
 	if err != nil {
-		dto.InternalServerErrorResponse(c, "Failed to retrieve audit logs", err.Error())
+		internalError(c, "Failed to retrieve audit logs", err)
 		return
 	}
 
@@ -110,7 +110,7 @@ func (h *AdminDashboardHandler) GetUserActivities(c *gin.Context) {
 	// Get user activities
 	userActivities, err := h.adminDashboardService.GetUserActivities(c.Request.Context(), &req, pagination)
 	if err != nil {
-		dto.InternalServerErrorResponse(c, "Failed to retrieve user activities", err.Error())
+		internalError(c, "Failed to retrieve user activities", err)
 		return
 	}
 
@@ -131,7 +131,7 @@ func (h *AdminDashboardHandler) GetSystemHealth(c *gin.Context) {
 	// Get system health
 	health, err := h.adminDashboardService.GetSystemHealth(c.Request.Context())
 	if err != nil {
-		dto.InternalServerErrorResponse(c, "Failed to retrieve system health", err.Error())
+		internalError(c, "Failed to retrieve system health", err)
 		return
 	}
 
@@ -169,7 +169,7 @@ func (h *AdminDashboardHandler) ApproveBusinessVerification(c *gin.Context) {
 	// Approve business verification
 	err := h.adminDashboardService.ApproveBusinessVerification(c.Request.Context(), &req, adminID.(string))
 	if err != nil {
-		dto.InternalServerErrorResponse(c, "Failed to approve business verification", err.Error())
+		internalError(c, "Failed to approve business verification", err)
 		return
 	}
 
@@ -207,7 +207,7 @@ func (h *AdminDashboardHandler) RejectBusinessVerification(c *gin.Context) {
 	// Reject business verification
 	err := h.adminDashboardService.RejectBusinessVerification(c.Request.Context(), &req, adminID.(string))
 	if err != nil {
-		dto.InternalServerErrorResponse(c, "Failed to reject business verification", err.Error())
+		internalError(c, "Failed to reject business verification", err)
 		return
 	}
 
@@ -245,7 +245,7 @@ func (h *AdminDashboardHandler) ApproveWorkerVerification(c *gin.Context) {
 	// Approve worker verification
 	err := h.adminDashboardService.ApproveWorkerVerification(c.Request.Context(), &req, adminID.(string))
 	if err != nil {
-		dto.InternalServerErrorResponse(c, "Failed to approve worker verification", err.Error())
+		internalError(c, "Failed to approve worker verification", err)
 		return
 	}
 
@@ -283,7 +283,7 @@ func (h *AdminDashboardHandler) RejectWorkerVerification(c *gin.Context) {
 	// Reject worker verification
 	err := h.adminDashboardService.RejectWorkerVerification(c.Request.Context(), &req, adminID.(string))
 	if err != nil {
-		dto.InternalServerErrorResponse(c, "Failed to reject worker verification", err.Error())
+		internalError(c, "Failed to reject worker verification", err)
 		return
 	}
 

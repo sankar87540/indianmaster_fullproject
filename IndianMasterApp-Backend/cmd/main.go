@@ -7,11 +7,13 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
 	"myapp/config"
 	_ "myapp/docs"
+	database "myapp/internal/database"
 	"myapp/internal/logger"
 	"myapp/internal/middleware"
 	"myapp/internal/routes"
@@ -62,6 +64,13 @@ func main() {
 		logger.Fatal("Failed to ping database", zap.Error(err))
 	}
 
+	// Run database migrations before accepting traffic
+	logger.Info("Running migrations...")
+	if err := database.RunMigrations(db, "migrations"); err != nil {
+		logger.Fatal("Failed to run migrations", zap.Error(err))
+	}
+	logger.Info("Migrations applied successfully")
+
 	// Configure connection pool
 	db.SetMaxOpenConns(25)
 	db.SetMaxIdleConns(5)
@@ -110,10 +119,11 @@ func main() {
 	router := gin.New()
 
 	// Add middleware - order matters!
-	router.Use(gin.Recovery())                       // Recover from panics
-	router.Use(corsMiddleware())                     // CORS headers
-	router.Use(middleware.CorrelationIDMiddleware()) // Add correlation ID
-	router.Use(middleware.LoggingMiddleware())       // Structured logging
+	router.Use(gin.Recovery())                         // Recover from panics
+	router.Use(corsMiddleware(cfg))                    // CORS headers
+	router.Use(middleware.SecurityHeadersMiddleware()) // Defensive security headers
+	router.Use(middleware.CorrelationIDMiddleware())   // Add correlation ID
+	router.Use(middleware.LoggingMiddleware())         // Structured logging
 
 	// Setup all routes
 	routes.SetupRoutes(router, db, redisClient)
@@ -158,10 +168,38 @@ func main() {
 	logger.Info("Server exited cleanly")
 }
 
-// corsMiddleware adds CORS headers to all responses
-func corsMiddleware() gin.HandlerFunc {
+// corsMiddleware adds CORS headers to all responses.
+// Allowed origins are read from CORS_ALLOWED_ORIGINS (comma-separated).
+// If the env var is empty, all origins are allowed in non-production environments only.
+func corsMiddleware(cfg *config.Config) gin.HandlerFunc {
+	var allowedOrigins []string
+	for _, o := range strings.Split(cfg.AllowedOrigins, ",") {
+		o = strings.TrimSpace(o)
+		if o != "" {
+			allowedOrigins = append(allowedOrigins, o)
+		}
+	}
+
 	return func(c *gin.Context) {
-		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+		origin := c.Request.Header.Get("Origin")
+
+		if origin != "" {
+			if len(allowedOrigins) == 0 {
+				// No allowlist configured: permit all in development, block in production.
+				if cfg.AppEnv != "production" {
+					c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+				}
+			} else {
+				for _, allowed := range allowedOrigins {
+					if origin == allowed {
+						c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
+						c.Writer.Header().Set("Vary", "Origin")
+						break
+					}
+				}
+			}
+		}
+
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH")
 		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
 

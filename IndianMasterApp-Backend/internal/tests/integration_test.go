@@ -81,7 +81,7 @@ func TestChatService_PreventDuplicateChatThreads(t *testing.T) {
 	defer db.Close()
 
 	chatRepo := repositories.NewChatRepository(db)
-	service := services.NewChatService(chatRepo)
+	service := services.NewChatService(chatRepo, nil, nil, nil)
 
 	ctx := context.Background()
 
@@ -476,7 +476,7 @@ func TestService_ConcurrentOperations(t *testing.T) {
 	defer db.Close()
 
 	chatRepo := repositories.NewChatRepository(db)
-	service := services.NewChatService(chatRepo)
+	service := services.NewChatService(chatRepo, nil, nil, nil)
 
 	ctx := context.Background()
 

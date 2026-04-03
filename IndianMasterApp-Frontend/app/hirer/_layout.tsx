@@ -8,6 +8,7 @@ export default function HirerLayout() {
       <Stack.Screen name="workers-list" />
       <Stack.Screen name="subscription" />
       <Stack.Screen name="manage-job" />
+      <Stack.Screen name="job-detail" />
     </Stack>
   );
 }

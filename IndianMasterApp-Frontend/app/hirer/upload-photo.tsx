@@ -2,6 +2,7 @@ import { View, Text, StyleSheet, TouchableOpacity, Image, Platform, useWindowDim
 import { useState, useEffect } from 'react';
 import { router, useLocalSearchParams } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
+import { uploadHirerLogo } from '@/services/workerService';
 import { Camera, ArrowLeft, X, Check } from 'lucide-react-native';
 import { Ionicons, Feather } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -19,6 +20,7 @@ export default function UploadPhotoScreen() {
     const isDesktop = width >= 768;
     const { businessType } = useLocalSearchParams<{ businessType: string }>();
     const [restaurantImage, setRestaurantImage] = useState<any>(null);
+    const [uploading, setUploading] = useState(false);
 
     // --- PERSISTENCE ---
     useEffect(() => {
@@ -134,7 +136,7 @@ export default function UploadPhotoScreen() {
         });
     };
 
-    const handleContinue = () => {
+    const handleContinue = async () => {
         if (!restaurantImage) {
             Alert.alert(
                 t('photoRequired') || 'Photo Required',
@@ -142,6 +144,16 @@ export default function UploadPhotoScreen() {
                 [{ text: 'OK' }]
             );
             return;
+        }
+
+        setUploading(true);
+        try {
+            await uploadHirerLogo(restaurantImage.uri);
+        } catch (e: any) {
+            // Non-fatal: log but still proceed
+            console.warn('[UploadPhoto] logo upload failed:', e?.message);
+        } finally {
+            setUploading(false);
         }
 
         router.push({
@@ -257,9 +269,9 @@ export default function UploadPhotoScreen() {
             {/* Footer */}
             <View style={[styles.footer, isDesktop && styles.desktopFooter]}>
                 <PrimaryButton
-                    title={restaurantImage ? t('saveAndContinue') : t('continue')}
+                    title={uploading ? 'Uploading…' : (restaurantImage ? t('saveAndContinue') : t('continue'))}
                     onPress={handleContinue}
-                    disabled={!restaurantImage}
+                    disabled={!restaurantImage || uploading}
                     style={[
                         styles.continueButton,
                         restaurantImage && styles.saveButtonActive

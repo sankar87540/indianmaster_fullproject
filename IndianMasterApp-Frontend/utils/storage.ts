@@ -114,5 +114,10 @@ export const clearAll = async (): Promise<void> => {
         clearAuthSession(),
         clearProfileData(),
         AsyncStorage.removeItem(AUTH_USER_ID_KEY),
+        // Hirer setup/draft caches — must be cleared on logout to prevent
+        // cross-account data leakage on shared devices.
+        AsyncStorage.removeItem('restaurantSetupForm'),
+        AsyncStorage.removeItem('restaurantPhoto'),
+        AsyncStorage.removeItem('jobPostingForm'),
     ]);
 };

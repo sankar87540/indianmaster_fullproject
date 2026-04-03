@@ -1,10 +1,11 @@
 import { View, Image, StyleSheet, TouchableOpacity, Text, Alert } from 'react-native';
-import { router, usePathname } from 'expo-router';
+import { router, usePathname, useFocusEffect } from 'expo-router';
 import { ArrowLeft, Bell, Phone, Globe, Check, X } from 'lucide-react-native';
 import { Linking, Modal, FlatList, Dimensions } from 'react-native';
 import { COLORS, SHADOWS } from '@/constants/theme';
 import { useTranslation } from 'react-i18next';
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
+import { getUnreadCount } from '@/services/notificationService';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -26,6 +27,13 @@ export default function AppHeader({
   const { i18n, t } = useTranslation();
   const pathname = usePathname();
   const [isLangModalVisible, setIsLangModalVisible] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  // Refresh unread count every time the screen that owns this header comes into focus
+  useFocusEffect(useCallback(() => {
+    if (!showNotification) return;
+    getUnreadCount().then(setUnreadCount).catch(() => {});
+  }, [showNotification]));
 
   const languages = [
     { code: 'en', label: 'En', native: 'English' },
@@ -75,12 +83,17 @@ export default function AppHeader({
             <TouchableOpacity
               style={styles.iconButton}
               onPress={() => {
-                const isEmployer = pathname.includes('/hirer');
-                router.push({ pathname: '/notifications', params: { role: isEmployer ? 'employer' : 'worker' } });
+                router.push('/notifications');
               }}
             >
               <Bell size={22} color={COLORS.text} />
-              <View style={styles.notificationBadge} />
+              {unreadCount > 0 && (
+                <View style={styles.notificationBadge}>
+                  <Text style={styles.notificationBadgeText}>
+                    {unreadCount > 99 ? '99' : String(unreadCount)}
+                  </Text>
+                </View>
+              )}
             </TouchableOpacity>
           )}
 
@@ -209,14 +222,23 @@ const styles = StyleSheet.create({
   },
   notificationBadge: {
     position: 'absolute',
-    top: 4,
-    right: 4,
-    width: 7,
-    height: 7,
-    borderRadius: 3.5,
+    top: 2,
+    right: 2,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
     backgroundColor: '#EF4444',
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: COLORS.white,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 3,
+  },
+  notificationBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: COLORS.white,
+    lineHeight: 11,
   },
   callSupportButton: {
     flexDirection: 'row',

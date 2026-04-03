@@ -22,8 +22,9 @@ type PostgresRepository struct {
 	verification  VerificationRepository
 	notification  NotificationRepository
 	audit         AuditRepository
-	chat          ChatRepository
-	contactLimit  ContactLimitRepository
+	chat                ChatRepository
+	contactLimit        ContactLimitRepository
+	hirerWorkerUnlocks  HirerWorkerUnlockRepository
 }
 
 // NewPostgresRepository creates a new PostgreSQL repository
@@ -39,10 +40,11 @@ func NewPostgresRepository(db *sql.DB) *PostgresRepository {
 	repo.subscriptions = NewSubscriptionRepository(db)
 	repo.liveTracking = NewLiveTrackingRepository(db)
 	repo.verification = NewVerificationRepository(db)
-	repo.notification = NewNotificationRepository(db)
+	repo.notification = NewNotificationPostgresRepository(db)
 	repo.audit = NewAuditRepository(db)
 	repo.chat = NewChatRepository(db)
 	repo.contactLimit = NewContactLimitRepository(db)
+	repo.hirerWorkerUnlocks = NewHirerWorkerUnlockRepository(db)
 
 	return repo
 }
@@ -107,6 +109,11 @@ func (r *PostgresRepository) ContactLimit() ContactLimitRepository {
 	return r.contactLimit
 }
 
+// HirerWorkerUnlocks returns the hirer-worker unlock repository
+func (r *PostgresRepository) HirerWorkerUnlocks() HirerWorkerUnlockRepository {
+	return r.hirerWorkerUnlocks
+}
+
 // BeginTx starts a new database transaction
 func (r *PostgresRepository) BeginTx(ctx context.Context) (Transaction, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -134,26 +141,28 @@ type transactionContext struct {
 	verification  VerificationRepository
 	notification  NotificationRepository
 	audit         AuditRepository
-	chat          ChatRepository
-	contactLimit  ContactLimitRepository
+	chat               ChatRepository
+	contactLimit       ContactLimitRepository
+	hirerWorkerUnlocks HirerWorkerUnlockRepository
 }
 
 // NewTransactionContext creates a new transaction context
 func NewTransactionContext(tx *sql.Tx) *transactionContext {
 	return &transactionContext{
-		tx:            tx,
-		users:         NewUserRepositoryWithTx(tx),
-		businesses:    NewBusinessRepositoryWithTx(tx),
-		workers:       NewWorkerRepositoryWithTx(tx),
-		jobs:          NewJobRepositoryWithTx(tx),
-		applications:  NewApplicationRepositoryWithTx(tx),
-		subscriptions: NewSubscriptionRepositoryWithTx(tx),
-		liveTracking:  NewLiveTrackingRepositoryWithTx(tx),
-		verification:  NewVerificationRepositoryWithTx(tx),
-		notification:  NewNotificationRepositoryWithTx(tx),
-		audit:         NewAuditRepositoryWithTx(tx),
-		chat:          NewChatRepositoryWithTx(tx),
-		contactLimit:  NewContactLimitRepositoryWithTx(tx),
+		tx:                 tx,
+		users:              NewUserRepositoryWithTx(tx),
+		businesses:         NewBusinessRepositoryWithTx(tx),
+		workers:            NewWorkerRepositoryWithTx(tx),
+		jobs:               NewJobRepositoryWithTx(tx),
+		applications:       NewApplicationRepositoryWithTx(tx),
+		subscriptions:      NewSubscriptionRepositoryWithTx(tx),
+		liveTracking:       NewLiveTrackingRepositoryWithTx(tx),
+		verification:       NewVerificationRepositoryWithTx(tx),
+		notification:       NewNotificationRepositoryWithTx(tx),
+		audit:              NewAuditRepositoryWithTx(tx),
+		chat:               NewChatRepositoryWithTx(tx),
+		contactLimit:       NewContactLimitRepositoryWithTx(tx),
+		hirerWorkerUnlocks: NewHirerWorkerUnlockRepositoryWithTx(tx),
 	}
 }
 
@@ -236,6 +245,11 @@ func (t *transactionContext) Chat() ChatRepository {
 // ContactLimit returns the contact limit repository
 func (t *transactionContext) ContactLimit() ContactLimitRepository {
 	return t.contactLimit
+}
+
+// HirerWorkerUnlocks returns the hirer-worker unlock repository
+func (t *transactionContext) HirerWorkerUnlocks() HirerWorkerUnlockRepository {
+	return t.hirerWorkerUnlocks
 }
 
 // BeginTx is not supported on a transaction

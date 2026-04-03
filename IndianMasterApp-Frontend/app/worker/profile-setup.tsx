@@ -11,6 +11,7 @@ import { MaterialCommunityIcons, Feather, Ionicons } from '@expo/vector-icons';
 import { saveProfileData, getProfileData } from '@/utils/storage';
 import { StatusBar } from 'expo-status-bar';
 import { createWorkerProfile, updateWorkerProfile, updateUserProfile } from '@/services/workerService';
+import * as Location from 'expo-location';
 import { ApiError } from '@/services/apiClient';
 import { mapToWorkerProfilePayload } from '@/utils/workerProfileMapper';
 import { Briefcase, BedDouble, Utensils, Store, Search, CheckCircle, User, ChefHat } from 'lucide-react-native';
@@ -110,7 +111,22 @@ export default function WorkerProfileSetupScreen() {
         // Merge data from earlier onboarding screens (educated-setup) with
         // the fields captured on this screen.
         const stored = await getProfileData();
+        let gpsLat: number | undefined;
+        let gpsLon: number | undefined;
+        try {
+          const { status } = await Location.requestForegroundPermissionsAsync();
+          if (status === 'granted') {
+            const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+            gpsLat = pos.coords.latitude;
+            gpsLon = pos.coords.longitude;
+          }
+        } catch { /* permission denied or GPS unavailable */ }
+
         const payload = mapToWorkerProfilePayload({
+          // Identity fields from educated-setup (persisted in AsyncStorage)
+          fullName: stored.fullName,
+          mobileNumber: stored.mobileNumber,
+          email: stored.email,
           // From educated-setup (persisted in AsyncStorage)
           age: stored.age,
           gender: stored.gender,
@@ -126,6 +142,8 @@ export default function WorkerProfileSetupScreen() {
           selectedExperience: [experience],
           languagesKnown,
           expectedSalary: parsedSalary,
+          liveLatitude: gpsLat,
+          liveLongitude: gpsLon,
         });
         try {
           await createWorkerProfile(payload);

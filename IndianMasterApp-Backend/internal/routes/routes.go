@@ -2,12 +2,16 @@ package routes
 
 import (
 	"database/sql"
+	"net/http"
+	"path/filepath"
+	"strings"
 
 	"myapp/internal/handlers"
 	"myapp/internal/middleware"
 	"myapp/internal/repositories"
 	"myapp/internal/services"
 	"myapp/internal/utils"
+	"myapp/internal/wschat"
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
@@ -31,6 +35,9 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redisClient *redis.Client) {
 	// Instant job application repository
 	instantApplyRepo := repositories.NewInstantJobApplicationRepository(db)
 
+	// Worker resume repository
+	workerResumeRepo := repositories.NewWorkerResumeRepository(db)
+
 	// =========================================================================
 	// INITIALIZE CACHE SERVICE
 	// =========================================================================
@@ -40,15 +47,23 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redisClient *redis.Client) {
 	// INITIALIZE SERVICES (V2 — with caching + notifications)
 	// =========================================================================
 
-	// Notification service (shared across all services that trigger notifications)
-	notificationSvc := services.NewNotificationServiceV2(notifRepo)
+	// Push notification service — sends Expo push messages
+	pushSvc := services.NewExpoPushService()
 
-	// Worker service V2 (cache-aware)
+	// Notification service (shared across all services that trigger notifications)
+	notificationSvc := services.NewNotificationServiceV2(notifRepo, repos.Users(), pushSvc)
+
+	// Hirer-worker unlock repository (persists contact unlocks per subscription)
+	hirerWorkerUnlockRepo := repositories.NewHirerWorkerUnlockRepository(db)
+
+	// Worker service V2 (cache-aware + unlock/gating support)
 	workerServiceV2 := services.NewWorkerServiceV2(
 		repos.Workers(),
 		repos.Users(),
 		repos.Verification(),
 		notifRepo,
+		hirerWorkerUnlockRepo,
+		repos.Subscriptions(),
 		cache,
 	)
 
@@ -90,7 +105,7 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redisClient *redis.Client) {
 	)
 
 	// Legacy services (unchanged — keep existing endpoints working)
-	chatService := services.NewChatService(repos.Chat())
+	chatService := services.NewChatService(repos.Chat(), notificationSvc, repos.Users(), repos.Businesses())
 	subscriptionService := services.NewSubscriptionService(repos.Subscriptions())
 	userService := services.NewUserService(repos.Users())
 	adminDashboardService := services.NewAdminDashboardService(
@@ -109,7 +124,7 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redisClient *redis.Client) {
 	authHandler := handlers.NewAuthHandler(services.NewAuthService(repos.Users(), cache))
 
 	// Worker handler — uses WorkerServiceV2 for cache-aware profile ops
-	workerHandler := handlers.NewWorkerHandlerV2(workerServiceV2)
+	workerHandler := handlers.NewWorkerHandlerV2(workerServiceV2, workerResumeRepo)
 
 	// Job handler — uses JobServiceV2 for cached feed + notification triggers
 	jobHandler := handlers.NewJobHandlerV2(jobServiceV2)
@@ -117,14 +132,23 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redisClient *redis.Client) {
 	// Application handler — uses ApplicationServiceV2 for notification triggers
 	applicationHandler := handlers.NewApplicationHandlerV2(applicationServiceV2)
 
-	// Chat handler (unchanged)
-	chatHandler := handlers.NewChatHandler(chatService)
+	// WebSocket hub — shared by the WS upgrade handler and the chat REST handler
+	wsHub := wschat.NewHub()
+
+	// Chat handler — wired to the hub so REST send/read trigger real-time WS events
+	chatHandler := handlers.NewChatHandlerWithHub(chatService, wsHub)
+
+	// WebSocket upgrade handler
+	chatWSHandler := handlers.NewChatWSHandler(wsHub)
 
 	// Subscription handler (unchanged)
 	subscriptionHandler := handlers.NewSubscriptionHandler(subscriptionService)
 
 	// Notification handler V2 — full implementation
 	notificationHandler := handlers.NewNotificationHandlerV2(notificationSvc)
+
+	// Push token handler — saves Expo push token for authenticated user
+	pushTokenHandler := handlers.NewPushTokenHandler(repos.Users())
 
 	// Admin handler V2 — with notification triggers
 	adminHandler := handlers.NewAdminHandlerV2(adminServiceV2)
@@ -144,6 +168,9 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redisClient *redis.Client) {
 	// Instant apply handler
 	instantApplyHandler := handlers.NewInstantApplyHandler(services.NewInstantApplyService(instantApplyRepo))
 
+	// Hirer business profile handler
+	businessHandler := handlers.NewBusinessHandler(services.NewBusinessService(repos.Businesses(), repos.Users()))
+
 	// =========================================================================
 	// RATE LIMITER
 	// =========================================================================
@@ -152,6 +179,41 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redisClient *redis.Client) {
 		rateLimiter = middleware.NewRateLimiter(redisClient)
 		router.Use(rateLimiter.RateLimitGeneral())
 	}
+
+	// =========================================================================
+	// FILE SERVING — /uploads/{category}/{owner_id}/{filename}
+	// Policy:
+	//   • Photos and logos (.jpg, .jpeg, .png, .webp, .gif) — no auth required.
+	//     React Native <Image> cannot send custom headers, so these must be public.
+	//   • Resumes (.pdf, .doc, .docx) — valid JWT required.
+	// =========================================================================
+	router.GET("/uploads/:category/:owner_id/:filename", func(c *gin.Context) {
+		category := c.Param("category")
+		ownerID := c.Param("owner_id")
+		filename := c.Param("filename")
+		// Reject path traversal — each segment must be a plain name with no separators.
+		for _, seg := range []string{category, ownerID, filename} {
+			if strings.Contains(seg, "..") || strings.ContainsAny(seg, "/\\") {
+				c.AbortWithStatus(http.StatusBadRequest)
+				return
+			}
+		}
+		// Enforce JWT for document files; photos and logos are served freely.
+		ext := strings.ToLower(filepath.Ext(filename))
+		switch ext {
+		case ".pdf", ".doc", ".docx":
+			parts := strings.SplitN(c.GetHeader("Authorization"), " ", 2)
+			if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+				c.AbortWithStatus(http.StatusUnauthorized)
+				return
+			}
+			if _, _, err := middleware.ValidateToken(parts[1]); err != nil {
+				c.AbortWithStatus(http.StatusUnauthorized)
+				return
+			}
+		}
+		c.File(filepath.Join("uploads", category, ownerID, filename))
+	})
 
 	// =========================================================================
 	// HEALTH CHECK
@@ -171,11 +233,12 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redisClient *redis.Client) {
 		// ===================== AUTH ROUTES =====================
 		if rateLimiter != nil {
 			v1.POST("/auth/login", rateLimiter.RateLimitLogin(), authHandler.Login)
+			v1.POST("/auth/send-otp", rateLimiter.RateLimitLogin(), authHandler.SendOTP)
 		} else {
 			v1.POST("/auth/login", authHandler.Login)
+			v1.POST("/auth/send-otp", authHandler.SendOTP)
 		}
 		v1.POST("/auth/register", authHandler.Register)
-		v1.POST("/auth/send-otp", authHandler.SendOTP)
 		v1.POST("/auth/verify-otp", authHandler.VerifyOTP)
 
 		// ===================== USER PROFILE ROUTE =====================
@@ -184,6 +247,8 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redisClient *redis.Client) {
 		userProfile.Use(middleware.AuthMiddleware())
 		{
 			userProfile.PUT("/profile", userHandlerV2.UpdateMyProfile)
+			// Save/update Expo push token for this device
+			userProfile.PUT("/push-token", pushTokenHandler.SavePushToken)
 		}
 
 		// ===================== WORKER ROUTES =====================
@@ -195,6 +260,10 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redisClient *redis.Client) {
 			workers.GET("/profile", workerHandler.GetProfile)
 			workers.PUT("/profile", workerHandler.UpdateProfile)
 			workers.GET("/profile/verification", workerHandler.GetVerificationStatus)
+			workers.POST("/profile/photo", workerHandler.UploadPhoto)
+			// Resume upload and retrieval
+			workers.POST("/profile/resume", workerHandler.UploadResume)
+			workers.GET("/profile/resume", workerHandler.GetResume)
 			// Cached recommended jobs endpoint
 			workers.GET("/:worker_id/recommended-jobs", userHandlerV2.GetRecommendedJobs)
 			// Instant job application form submission
@@ -210,14 +279,51 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redisClient *redis.Client) {
 			jobs.GET("/:job_id", jobHandler.GetJobByID)
 		}
 
+		// ===================== HIRER PROFILE ROUTES =====================
+		hirerProfile := v1.Group("/hirer/profile")
+		hirerProfile.Use(middleware.AuthMiddleware())
+		hirerProfile.Use(middleware.RoleValidator("HIRER"))
+		{
+			hirerProfile.GET("", businessHandler.GetMyHirerProfile)
+			hirerProfile.PUT("", businessHandler.UpsertMyHirerProfile)
+			hirerProfile.POST("/logo", businessHandler.UploadLogo)
+		}
+
+		hirerWorkers := v1.Group("/hirer/workers")
+		hirerWorkers.Use(middleware.AuthMiddleware())
+		hirerWorkers.Use(middleware.RoleValidator("HIRER"))
+		{
+			// List all active workers for the Explore screen (phone stripped)
+			hirerWorkers.GET("", workerHandler.ListWorkersForHirer)
+			// View a single worker's public profile (phone stripped)
+			hirerWorkers.GET("/:worker_id/profile", workerHandler.GetWorkerProfileForHirer)
+			// Check if the hirer has already unlocked a worker's contact
+			hirerWorkers.GET("/:worker_id/unlock-status", workerHandler.CheckWorkerUnlockStatus)
+		}
+		// Unlock endpoint is rate-limited to prevent subscription-bypass abuse.
+		// Unlock endpoint uses RateLimitAction (separate bucket from auth endpoints).
+		if rateLimiter != nil {
+			hirerWorkers.POST("/:worker_id/unlock", rateLimiter.RateLimitAction(), workerHandler.UnlockWorkerContact)
+		} else {
+			hirerWorkers.POST("/:worker_id/unlock", workerHandler.UnlockWorkerContact)
+		}
+
 		hirersJobs := v1.Group("/hirer/jobs")
 		hirersJobs.Use(middleware.AuthMiddleware())
 		hirersJobs.Use(middleware.RoleValidator("HIRER"))
 		{
+			// List hirer's own jobs
+			hirersJobs.GET("", jobHandler.GetMyJobs)
 			// Creates job + invalidates cache + notifies matching workers
 			hirersJobs.POST("", jobHandler.CreateJob)
 			// Updates job + invalidates cache
 			hirersJobs.PUT("/:job_id", jobHandler.UpdateJob)
+			// List enriched applicants for a specific hirer-owned job
+			hirersJobs.GET("/:job_id/applicants", applicationHandler.GetApplicantsByJobID)
+			// Soft-delete a hirer-owned job
+			hirersJobs.DELETE("/:job_id", jobHandler.DeleteJob)
+			// Update application status (hirer-scoped ownership check)
+			hirersJobs.PUT("/:job_id/applicants/:application_id/status", applicationHandler.UpdateApplicationStatusByHirer)
 		}
 
 		// ===================== APPLICATION ROUTES =====================
@@ -225,9 +331,13 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redisClient *redis.Client) {
 		applications.Use(middleware.AuthMiddleware())
 		applications.Use(middleware.WorkerOnly())
 		{
-			// Apply to job + notify hirer + invalidate cache
-			applications.POST("", applicationHandler.ApplyToJob)
 			applications.GET("/my-applications", applicationHandler.GetApplicationsByWorker)
+		}
+		// Apply endpoint uses RateLimitAction (separate bucket from auth endpoints).
+		if rateLimiter != nil {
+			applications.POST("", rateLimiter.RateLimitAction(), applicationHandler.ApplyToJob)
+		} else {
+			applications.POST("", applicationHandler.ApplyToJob)
 		}
 
 		adminApplications := v1.Group("/admin/applications")
@@ -239,6 +349,10 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redisClient *redis.Client) {
 		}
 
 		// ===================== CHAT ROUTES =====================
+		// WebSocket endpoint — auth is via ?token= query param inside the handler,
+		// so it must NOT have the AuthMiddleware applied at the router level.
+		v1.GET("/chat/ws", chatWSHandler.Connect)
+
 		chat := v1.Group("/chat")
 		chat.Use(middleware.AuthMiddleware())
 		{
@@ -247,6 +361,7 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redisClient *redis.Client) {
 			chat.GET("/threads/:thread_id/messages", chatHandler.GetMessages)
 			chat.POST("/threads/:thread_id/messages", chatHandler.SendMessage)
 			chat.PATCH("/threads/:thread_id/read", chatHandler.MarkThreadRead)
+			chat.GET("/threads/:thread_id/presence", chatHandler.GetThreadPresence)
 		}
 
 		// ===================== SUBSCRIPTION ROUTES =====================

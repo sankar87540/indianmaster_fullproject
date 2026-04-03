@@ -3,15 +3,25 @@ package handlers
 import (
 	"myapp/internal/dto"
 	"myapp/internal/errors"
+	"myapp/internal/logger"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 )
+
+// internalError logs err server-side and returns a generic 500 to the client.
+// Always use this instead of passing err.Error() directly to InternalServerErrorResponse.
+func internalError(c *gin.Context, msg string, err error) {
+	logger.Error(msg, zap.Error(err))
+	dto.InternalServerErrorResponse(c, msg, nil)
+}
 
 // handleError maps AppError to standardized HTTP response
 func handleError(c *gin.Context, err error) {
 	appErr, ok := err.(*errors.AppError)
 	if !ok {
-		dto.InternalServerErrorResponse(c, "An internal server error occurred", gin.H{"error": err.Error()})
+		logger.Error("unhandled internal error", zap.Error(err))
+		dto.InternalServerErrorResponse(c, "An internal server error occurred", nil)
 		return
 	}
 

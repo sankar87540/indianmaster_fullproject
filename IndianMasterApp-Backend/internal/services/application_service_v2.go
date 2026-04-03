@@ -5,11 +5,13 @@ import (
 	"fmt"
 
 	"myapp/internal/dto"
+	"myapp/internal/logger"
 	"myapp/internal/models"
 	"myapp/internal/repositories"
 	"myapp/internal/utils"
 
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
 
 // ============================================================================
@@ -132,6 +134,47 @@ func (s *ApplicationServiceV2) GetApplicationsByWorker(ctx context.Context, work
 	return result, total, nil
 }
 
+// GetApplicantsByJobID returns the enriched applicant list for a job owned by the given hirer.
+// Returns ForbiddenJobAccess error if the job does not belong to the hirer's business.
+func (s *ApplicationServiceV2) GetApplicantsByJobID(ctx context.Context, jobID, hirerUserID string) ([]dto.ApplicantDetail, error) {
+	// Ownership check: resolve hirer's business, then verify job belongs to it
+	biz, err := s.businessRepo.GetFirstByOwnerID(ctx, hirerUserID)
+	if err != nil {
+		return nil, fmt.Errorf("hirer has no business profile")
+	}
+	job, err := s.jobRepo.GetByID(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	if job.BusinessID != biz.ID {
+		return nil, fmt.Errorf("ForbiddenJobAccess")
+	}
+
+	rows, err := s.applicationRepo.GetApplicantsByJobID(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]dto.ApplicantDetail, len(rows))
+	for i, r := range rows {
+		result[i] = dto.ApplicantDetail{
+			ApplicationID:     r.ApplicationID,
+			Status:            r.Status,
+			AppliedAt:         r.AppliedAt,
+			WorkerUserID:      r.WorkerUserID,
+			FullName:          r.FullName,
+			Phone:             r.Phone,
+			Email:             r.Email,
+			City:              r.City,
+			State:             r.State,
+			ExpectedSalaryMin: r.ExpectedSalaryMin,
+			ExpectedSalaryMax: r.ExpectedSalaryMax,
+			ProfilePhotoURL:   r.ProfilePhotoURL,
+		}
+	}
+	return result, nil
+}
+
 // UpdateApplicationStatus updates the status of an application and notifies the worker.
 //
 // Triggers:
@@ -147,6 +190,27 @@ func (s *ApplicationServiceV2) UpdateApplicationStatus(ctx context.Context, appl
 	return nil
 }
 
+// UpdateApplicationStatusByHirer updates an application status after verifying the hirer owns the job.
+// Returns ForbiddenJobAccess error if the job does not belong to the hirer's business.
+func (s *ApplicationServiceV2) UpdateApplicationStatusByHirer(ctx context.Context, jobID, applicationID, status, hirerUserID string) error {
+	biz, err := s.businessRepo.GetFirstByOwnerID(ctx, hirerUserID)
+	if err != nil {
+		return fmt.Errorf("hirer has no business profile")
+	}
+	job, err := s.jobRepo.GetByID(ctx, jobID)
+	if err != nil {
+		return err
+	}
+	if job.BusinessID != biz.ID {
+		return fmt.Errorf("ForbiddenJobAccess")
+	}
+	if err := s.applicationRepo.UpdateStatus(ctx, applicationID, status); err != nil {
+		return err
+	}
+	go s.notifyWorkerOnStatusChange(context.Background(), applicationID, status)
+	return nil
+}
+
 // ============================================================================
 // INTERNAL NOTIFICATION HELPERS
 // ============================================================================
@@ -156,11 +220,13 @@ func (s *ApplicationServiceV2) UpdateApplicationStatus(ctx context.Context, appl
 func (s *ApplicationServiceV2) notifyHirerOnApplication(ctx context.Context, jobID, _ /* workerUserID */, applicationID string) {
 	job, err := s.jobRepo.GetByID(ctx, jobID)
 	if err != nil {
+		logger.Error("notifyHirerOnApplication: failed to get job", zap.String("jobID", jobID), zap.Error(err))
 		return
 	}
 
 	business, err := s.businessRepo.GetByID(ctx, job.BusinessID)
 	if err != nil {
+		logger.Error("notifyHirerOnApplication: failed to get business", zap.String("businessID", job.BusinessID), zap.Error(err))
 		return
 	}
 

@@ -5,6 +5,9 @@ import { BedDouble, Store, Utensils, Users } from 'lucide-react-native';
 import { MaterialCommunityIcons, Feather, Ionicons } from '@expo/vector-icons';
 import { FlatList } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getProfileData } from '@/utils/storage';
+import { getHirerProfile, upsertHirerProfile } from '@/services/workerService';
+import * as Location from 'expo-location';
 import PrimaryButton from '@/components/PrimaryButton';
 import { COLORS, SIZES, SPACING, SHADOWS } from '@/constants/theme';
 import { StatusBar } from 'expo-status-bar';
@@ -31,10 +34,40 @@ export default function RestaurantSetupScreen() {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [businessSearch, setBusinessSearch] = useState('');
   const [restaurantImage, setRestaurantImage] = useState<any>(null);
+  // const [city, setCity] = useState('');
+  // const [state, setState] = useState('');
 
   // --- PERSISTENCE ---
   useEffect(() => {
     const loadSavedData = async () => {
+      try {
+        // Try backend first — this restores data after re-login or new device
+        const profile = await getHirerProfile();
+        if (profile) {
+          if (profile.businessName) setRestaurantName(profile.businessName);
+          if (profile.ownerName) setOwnerName(profile.ownerName);
+          if (profile.contactRole) setContactRole(profile.contactRole as 'Owner' | 'Manager' | '');
+          if (profile.email) setEmail(profile.email);
+          if (profile.mobileNumber) setMobileNumber(profile.mobileNumber);
+          if (profile.fssaiLicense) setFssaiLicense(profile.fssaiLicense);
+          if (profile.gstNumber) setGstNumber(profile.gstNumber);
+          if (profile.businessTypes?.length) setSelectedTypes(profile.businessTypes);
+          if (profile.employeeCount) setEmployeeCount(String(profile.employeeCount));
+          // if (profile.city) setCity(profile.city);
+          // if (profile.state) setState(profile.state);
+          return;
+        }
+      } catch (profileErr: any) {
+        // 401/403 means the session is invalid — surface the error so the
+        // user knows they need to re-login instead of silently seeing empty form
+        if (profileErr?.statusCode === 401 || profileErr?.statusCode === 403) {
+          console.error('[restaurant-setup] Auth error loading hirer profile:', profileErr?.message);
+          // Do not fall through to AsyncStorage; the caller (role-selection) already
+          // handles proper navigation after OTP verify, so this path is only for
+          // the edit-profile flow where the token should still be valid.
+        }
+        // Network / server errors: fall through to AsyncStorage draft
+      }
       try {
         const savedData = await AsyncStorage.getItem('restaurantSetupForm');
         if (savedData) {
@@ -48,9 +81,18 @@ export default function RestaurantSetupScreen() {
           if (data.gstNumber) setGstNumber(data.gstNumber);
           if (data.selectedTypes) setSelectedTypes(data.selectedTypes);
           if (data.employeeCount) setEmployeeCount(data.employeeCount);
+          return;
         }
       } catch (error) {
         console.error('Error loading setup form data:', error);
+      }
+      // Last resort: pre-fill mobile number from auth session so the hirer
+      // doesn't have to re-type their own number when completing first-time setup.
+      try {
+        const profileData = await getProfileData();
+        if (profileData?.mobileNumber) setMobileNumber(profileData.mobileNumber);
+      } catch {
+        // non-fatal
       }
     };
     loadSavedData();
@@ -140,16 +182,49 @@ export default function RestaurantSetupScreen() {
   ];
 
 
-  const handleContinue = () => {
-    if (validate()) {
+  const handleContinue = async () => {
+    if (!validate()) {
+      Alert.alert(t('incompleteDetails') || 'Incomplete Details', t('fillRequiredFields') || 'Please fill in all required fields marked in red.');
+      return;
+    }
+    try {
+      // Silently attempt to capture device GPS (requires expo-location to be installed).
+      // Non-fatal: if unavailable, coordinates are simply not sent this time.
+      let gpsLatitude: number | undefined;
+      let gpsLongitude: number | undefined;
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status === 'granted') {
+          const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+          gpsLatitude = pos.coords.latitude;
+          gpsLongitude = pos.coords.longitude;
+        }
+      } catch {
+        // permission denied or GPS unavailable — continue without coordinates
+      }
+
+      await upsertHirerProfile({
+        businessName: restaurantName.trim(),
+        ownerName: ownerName.trim(),
+        contactRole: contactRole || 'Owner',
+        businessTypes: selectedTypes,
+        email: email.trim() || undefined,
+        mobileNumber: mobileNumber.trim() || undefined,
+        fssaiLicense: fssaiLicense.trim() || undefined,
+        gstNumber: gstNumber.trim() || undefined,
+        employeeCount: employeeCount ? parseInt(employeeCount, 10) : undefined,
+        // city: city.trim() || undefined,
+        // state: state.trim() || undefined,
+        latitude: gpsLatitude,
+        longitude: gpsLongitude,
+      });
       router.push({
         pathname: '/hirer/job-posting',
-        params: {
-          businessType: selectedTypes.join(','),
-        },
+        params: { businessType: selectedTypes.join(',') },
       });
-    } else {
-      Alert.alert(t('incompleteDetails') || 'Incomplete Details', t('fillRequiredFields') || 'Please fill in all required fields marked in red.');
+    } catch (e: any) {
+      const msg = e?.message || 'Failed to save your business details. Please try again.';
+      Alert.alert(t('error') || 'Error', msg);
     }
   };
 
@@ -306,7 +381,9 @@ export default function RestaurantSetupScreen() {
                 </View>
                 {errors.employeeCount && <Text style={styles.vibrantError}>{errors.employeeCount}</Text>}
               </View>
+
             </View>
+            
 
             {/* Verification Group */}
             <View style={styles.islandSection}>

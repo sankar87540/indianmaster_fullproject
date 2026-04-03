@@ -31,10 +31,18 @@ func (rl *RateLimiter) RateLimitGeneral() gin.HandlerFunc {
 	return rl.createLimiter(100, 1*time.Minute)
 }
 
-// RateLimitLogin middleware limits login attempts: 20 per minute per IP
+// RateLimitLogin middleware limits auth attempts: 20 per minute per IP.
+// Uses an isolated Redis key so auth traffic cannot be crowded out by other limiters.
 // Usage: router.POST("/login", rateLimiter.RateLimitLogin(), handler.Login)
 func (rl *RateLimiter) RateLimitLogin() gin.HandlerFunc {
-	return rl.createLimiterByIP(20, 1*time.Minute)
+	return rl.createLimiterByIPWithPrefix("login", 20, 1*time.Minute)
+}
+
+// RateLimitAction middleware limits high-value user actions (contact unlock, job apply):
+// 20 per minute per IP. Uses a separate Redis key from RateLimitLogin so that
+// unlock/apply traffic cannot exhaust the auth bucket and vice-versa.
+func (rl *RateLimiter) RateLimitAction() gin.HandlerFunc {
+	return rl.createLimiterByIPWithPrefix("action", 20, 1*time.Minute)
 }
 
 // createLimiter creates a rate limiter that uses user_id (if authenticated) or IP address
@@ -85,16 +93,19 @@ func (rl *RateLimiter) createLimiter(maxRequests int, window time.Duration) gin.
 	}
 }
 
-// createLimiterByIP creates a rate limiter that only uses IP address (for login, etc.)
-// - maxRequests: maximum number of requests allowed
-// - window: time window for the rate limit
-func (rl *RateLimiter) createLimiterByIP(maxRequests int, window time.Duration) gin.HandlerFunc {
+// createLimiterByIPWithPrefix creates a rate limiter keyed by IP and a namespace prefix.
+// Different prefixes produce independent counters so distinct endpoint groups cannot
+// exhaust each other's quota.
+// - keyPrefix: namespace string embedded in the Redis key (e.g., "login", "action")
+// - maxRequests: maximum number of requests allowed in the window
+// - window: sliding window duration
+func (rl *RateLimiter) createLimiterByIPWithPrefix(keyPrefix string, maxRequests int, window time.Duration) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ctx := context.Background()
 
 		// Get IP address only (ignore user context)
 		ip := rl.getClientIP(c)
-		key := fmt.Sprintf("rate_limit:ip:%s", ip)
+		key := fmt.Sprintf("rate_limit:%s:%s", keyPrefix, ip)
 
 		// Check current count
 		cmd := rl.client.Get(ctx, key)

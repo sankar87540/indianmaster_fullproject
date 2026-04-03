@@ -35,3 +35,5 @@ yarn-error.*
 
 # typescript
 *.tsbuildinfo
+# uploads (VERY IMPORTANT)
+IndianMasterApp-Backend/uploads/

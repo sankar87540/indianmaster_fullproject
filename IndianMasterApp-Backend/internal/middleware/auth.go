@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 )
 
 const (
@@ -240,18 +241,34 @@ func PaginationValidator() gin.HandlerFunc {
 	}
 }
 
-// CorrelationIDMiddleware adds correlation ID to requests
+// CorrelationIDMiddleware adds correlation ID to requests.
+// Uses the caller-supplied X-Correlation-ID header when present;
+// otherwise generates a fresh UUID so every request is traceable.
 func CorrelationIDMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		correlationID := c.GetHeader("X-Correlation-ID")
 		if correlationID == "" {
-			// TODO: Generate UUID
-			correlationID = ""
+			correlationID = uuid.New().String()
 		}
 
 		c.Set(CorrelationIDContextKey, correlationID)
 		c.Header("X-Correlation-ID", correlationID)
 
+		c.Next()
+	}
+}
+
+// SecurityHeadersMiddleware sets defensive HTTP response headers on every response.
+// HSTS is only emitted in production (APP_ENV=production) because it must only be
+// sent over verified HTTPS connections.
+func SecurityHeadersMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("X-Frame-Options", "DENY")
+		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
+		if os.Getenv("APP_ENV") == "production" {
+			c.Header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
 		c.Next()
 	}
 }

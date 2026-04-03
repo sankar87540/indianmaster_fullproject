@@ -3,9 +3,27 @@ package repositories
 import (
 	"context"
 	"database/sql"
+	"time"
 
 	"myapp/internal/models"
 )
+
+// ApplicantRow is the result of a JOIN between applications and workers.
+// Returned by ApplicationRepository.GetApplicantsByJobID.
+type ApplicantRow struct {
+	ApplicationID     string
+	Status            string
+	AppliedAt         time.Time
+	WorkerUserID      string
+	FullName          string
+	Phone             string
+	Email             string
+	City              string
+	State             string
+	ExpectedSalaryMin int
+	ExpectedSalaryMax int
+	ProfilePhotoURL   string
+}
 
 // UserRepository handles user data operations
 type UserRepository interface {
@@ -17,6 +35,8 @@ type UserRepository interface {
 	Delete(ctx context.Context, id string) error
 	ListByRole(ctx context.Context, role string) ([]*models.User, error)
 	ListActive(ctx context.Context) ([]*models.User, error)
+	UpdatePushToken(ctx context.Context, userID, token string) error
+	GetPushToken(ctx context.Context, userID string) (string, error)
 }
 
 // BusinessRepository handles business data operations
@@ -24,6 +44,7 @@ type BusinessRepository interface {
 	Create(ctx context.Context, business *models.Business) error
 	GetByID(ctx context.Context, id string) (*models.Business, error)
 	GetByOwnerID(ctx context.Context, ownerID string) ([]*models.Business, error)
+	GetFirstByOwnerID(ctx context.Context, ownerID string) (*models.Business, error)
 	Update(ctx context.Context, business *models.Business) error
 	Delete(ctx context.Context, id string) error
 	ListByCity(ctx context.Context, city string) ([]*models.Business, error)
@@ -70,6 +91,7 @@ type ApplicationRepository interface {
 	UpdateStatus(ctx context.Context, applicationID, status string) error
 	ListByStatus(ctx context.Context, status string) ([]*models.Application, error)
 	ExistsByJobAndWorker(ctx context.Context, jobID, workerID string) (bool, error)
+	GetApplicantsByJobID(ctx context.Context, jobID string) ([]ApplicantRow, error)
 }
 
 // SubscriptionRepository handles subscription data operations
@@ -97,6 +119,17 @@ type WorkerLiveTrackingRepository interface {
 // InstantJobApplicationRepository handles instant apply form submissions
 type InstantJobApplicationRepository interface {
 	Create(ctx context.Context, app *models.InstantJobApplication) error
+}
+
+// WorkerResumeRepository handles worker resume metadata storage.
+// Binary file data is never stored in DB — only metadata and file URL.
+type WorkerResumeRepository interface {
+	// Upsert deactivates all existing active resumes for the worker, then inserts
+	// the new one as the single active resume. Runs in a single transaction.
+	Upsert(ctx context.Context, resume *models.WorkerResume) error
+	// GetActiveByWorkerID returns the current active resume for a worker.
+	// Returns sql.ErrNoRows if the worker has no active resume.
+	GetActiveByWorkerID(ctx context.Context, workerID string) (*models.WorkerResume, error)
 }
 
 // Transaction represents a database transaction context
@@ -141,6 +174,14 @@ type ChatRepository interface {
 	UpdateChatThreadLastMessage(ctx context.Context, threadID string) error
 	ArchiveChatThread(ctx context.Context, threadID string) error
 	GetUnreadChatCount(ctx context.Context, userID string) (int, error)
+	// Presence: update the caller's last_seen timestamp
+	UpdateUserLastSeen(ctx context.Context, userID string) error
+	// Presence: get the other participant's last_seen in a thread
+	GetOtherUserPresence(ctx context.Context, threadID, callerID string) (*time.Time, error)
+	// Delivery tracking: mark messages as delivered when recipient fetches them
+	MarkThreadMessagesAsDelivered(ctx context.Context, threadID, recipientID string) error
+	// Reply validation: fetch a single message by ID (checks reply_to belongs to thread)
+	GetChatMessageByID(ctx context.Context, messageID string) (*models.ChatMessage, error)
 }
 
 // SavedItemsRepository handles saved jobs and workers
@@ -171,6 +212,11 @@ type VerificationRepository interface {
 // NotificationRepository handles notifications
 type NotificationRepository interface {
 	CreateNotification(ctx context.Context, notif *models.Notification) error
+	// UpsertChatNotification inserts a new CHAT_MESSAGE notification for the given
+	// thread, or if one already exists for (user_id, type, related_entity_id),
+	// updates the title/message/unread_count in place so that the same thread
+	// always has exactly one notification entry (WhatsApp-style grouping).
+	UpsertChatNotification(ctx context.Context, notif *models.Notification) error
 	GetNotificationsByUserID(ctx context.Context, userID string, unreadOnly bool, page, limit int) ([]*models.Notification, int64, error)
 	MarkNotificationAsRead(ctx context.Context, notifID string) error
 	GetUnreadCount(ctx context.Context, userID string) (int, error)
@@ -193,4 +239,12 @@ type ContactLimitRepository interface {
 	IncrementContactUsage(ctx context.Context, logID string) error
 	HasAvailableContacts(ctx context.Context, hirerID string) (bool, int, error)
 	GetDailyUsage(ctx context.Context, hirerID string) (*models.WorkerContactLimitLog, error)
+}
+
+// HirerWorkerUnlockRepository tracks which hirers have unlocked which workers' contact details.
+type HirerWorkerUnlockRepository interface {
+	// Create records a new unlock. Uses ON CONFLICT DO NOTHING so it is safe to call multiple times.
+	Create(ctx context.Context, unlock *models.HirerWorkerUnlock) error
+	// IsUnlocked returns true if the hirer has previously unlocked this worker.
+	IsUnlocked(ctx context.Context, hirerUserID, workerID string) (bool, error)
 }

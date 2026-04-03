@@ -10,16 +10,18 @@ import (
 
 // User represents a system user (Hirer, Worker, Admin)
 type User struct {
-	ID           string    `json:"id" db:"id"`
-	Phone        string    `json:"phoneNumber" db:"phone"`
-	FullName     string    `json:"fullName" db:"full_name"`
-	Email        string    `json:"email" db:"email"`
-	PasswordHash string    `json:"-" db:"password_hash"`   // Never exposed in JSON
-	Role         string    `json:"role" db:"role"`         // HIRER, WORKER, ADMIN
-	Language     string    `json:"language" db:"language"` // en, hi, ta
-	IsActive     bool      `json:"isActive" db:"is_active"`
-	CreatedAt    time.Time `json:"createdAt" db:"created_at"`
-	UpdatedAt    time.Time `json:"updatedAt" db:"updated_at"`
+	ID           string     `json:"id" db:"id"`
+	Phone        string     `json:"phoneNumber" db:"phone"`
+	FullName     string     `json:"fullName" db:"full_name"`
+	Email        string     `json:"email" db:"email"`
+	PasswordHash string     `json:"-" db:"password_hash"`   // Never exposed in JSON
+	Role         string     `json:"role" db:"role"`         // HIRER, WORKER, ADMIN
+	Language     string     `json:"language" db:"language"` // en, hi, ta
+	IsActive     bool       `json:"isActive" db:"is_active"`
+	LastSeen     *time.Time `json:"lastSeen" db:"last_seen"` // Presence: updated on activity
+	PushToken    *string    `json:"-" db:"push_token"`       // Expo push token — never exposed in JSON
+	CreatedAt    time.Time  `json:"createdAt" db:"created_at"`
+	UpdatedAt    time.Time  `json:"updatedAt" db:"updated_at"`
 }
 
 // ================ BUSINESS ENTITY (Replaces Employers + Employer Locations) ================
@@ -42,6 +44,7 @@ type Business struct {
 	AddressText  string    `json:"addressText" db:"address_text"`
 	Latitude     float64   `json:"latitude" db:"latitude"`
 	Longitude    float64   `json:"longitude" db:"longitude"`
+	EmployeeCount int       `json:"employeeCount" db:"employee_count"`
 	IsActive     bool      `json:"isActive" db:"is_active"`
 	Language     string    `json:"language" db:"language"`
 	CreatedAt    time.Time `json:"createdAt" db:"created_at"`
@@ -108,20 +111,30 @@ type Job struct {
 	ExperienceMin      int            `json:"experienceMin" db:"experience_min"`
 	ExperienceMax      *int           `json:"experienceMax" db:"experience_max"`
 	Vacancies          int            `json:"vacancies" db:"vacancies"`
+	GenderPreference   string         `json:"genderPreference" db:"gender_preference"`
+	MaleVacancies      int            `json:"maleVacancies" db:"male_vacancies"`
+	FemaleVacancies    int            `json:"femaleVacancies" db:"female_vacancies"`
+	OthersVacancies    int            `json:"othersVacancies" db:"others_vacancies"`
 	WorkingHours       *int           `json:"workingHours" db:"working_hours"`
 	WeeklyLeaves       int            `json:"weeklyLeaves" db:"weekly_leaves"`
 	Benefits           pq.StringArray `json:"benefits" db:"benefits"`
 	WorkType           string         `json:"workType" db:"work_type"`
 	AddressText        string         `json:"addressText" db:"address_text"`
+	Locality           string         `json:"locality" db:"locality"`
 	City               string         `json:"city" db:"city"`
 	State              string         `json:"state" db:"state"`
 	Latitude           *float64       `json:"latitude" db:"latitude"`
 	Longitude          *float64       `json:"longitude" db:"longitude"`
+	Description        string         `json:"description" db:"description"`
+	Availability       pq.StringArray `json:"availability" db:"availability"`
 	Status             string         `json:"status" db:"status"` // OPEN, CLOSED, FILLED
 	Language           string         `json:"language" db:"language"`
 	IsActive           bool           `json:"isActive" db:"is_active"`
 	CreatedAt          time.Time      `json:"createdAt" db:"created_at"`
 	UpdatedAt          time.Time      `json:"updatedAt" db:"updated_at"`
+	// Transient fields — populated by ListOpenJobs via LEFT JOIN businesses, zero otherwise.
+	BusinessName string `json:"businessName,omitempty" db:"-"`
+	LogoURL      string `json:"logoUrl,omitempty" db:"-"`
 }
 
 // ================ APPLICATION ENTITY ================
@@ -149,6 +162,18 @@ type Subscription struct {
 	PaymentID  string     `json:"paymentId" db:"payment_id"`
 	CreatedAt  time.Time  `json:"createdAt" db:"created_at"`
 	UpdatedAt  time.Time  `json:"updatedAt" db:"updated_at"`
+}
+
+// ================ HIRER WORKER UNLOCK ENTITY ================
+
+// HirerWorkerUnlock records when a hirer has unlocked a worker's contact details.
+// Created once per (hirer, worker) pair after subscription is verified.
+type HirerWorkerUnlock struct {
+	ID          string    `json:"id" db:"id"`
+	HirerUserID string    `json:"hirerUserId" db:"hirer_user_id"`
+	WorkerID    string    `json:"workerId" db:"worker_id"`
+	UnlockedAt  time.Time `json:"unlockedAt" db:"unlocked_at"`
+	CreatedAt   time.Time `json:"createdAt" db:"created_at"`
 }
 
 // ================ LIVE TRACKING ENTITY ================
@@ -279,8 +304,11 @@ type ChatThread struct {
 	CreatedAt     time.Time  `json:"createdAt" db:"created_at"`
 	UpdatedAt     time.Time  `json:"updatedAt" db:"updated_at"`
 
-	// Enriched fields — populated by GetChatThreadsByUserID only
+	// Enriched fields — populated by GetChatThreadsByUserID only.
+	// DisplayName is the other party's name as seen by the requesting user:
+	// a worker sees the hirer/business name; a hirer sees the worker's name.
 	HirerName           string `json:"hirerName" db:"-"`
+	WorkerName          string `json:"workerName" db:"-"`
 	LastMessagePreview  string `json:"lastMessagePreview" db:"-"`
 	UnreadCount         int    `json:"unreadCount" db:"-"`
 }
@@ -294,10 +322,16 @@ type ChatMessage struct {
 	AttachmentURLs pq.StringArray `json:"attachmentUrls" db:"attachment_urls"`
 	IsRead         bool           `json:"isRead" db:"is_read"`
 	ReadAt         *time.Time     `json:"readAt" db:"read_at"`
-	DeletedAt      *time.Time     `json:"deletedAt" db:"deleted_at"`
-	DeletedBy      *string        `json:"deletedBy" db:"deleted_by"`
-	CreatedAt      time.Time      `json:"createdAt" db:"created_at"`
-	UpdatedAt      time.Time      `json:"updatedAt" db:"updated_at"`
+	DeliveredAt    *time.Time     `json:"deliveredAt" db:"delivered_at"`
+	// Reply support: points to the message this one is quoting.
+	ReplyToMessageID *string    `json:"replyToMessageId" db:"reply_to_message_id"`
+	// Enriched fields — populated by GetChatMessages JOIN only.
+	ReplyToText     *string    `json:"replyToText" db:"-"`
+	ReplyToSenderID *string    `json:"replyToSenderId" db:"-"`
+	DeletedAt       *time.Time `json:"deletedAt" db:"deleted_at"`
+	DeletedBy       *string    `json:"deletedBy" db:"deleted_by"`
+	CreatedAt       time.Time  `json:"createdAt" db:"created_at"`
+	UpdatedAt       time.Time  `json:"updatedAt" db:"updated_at"`
 }
 
 // ================ SAVED ITEMS ENTITIES ================
@@ -374,6 +408,8 @@ type Notification struct {
 	RelatedEntityID   *string    `json:"relatedEntityId" db:"related_entity_id"`
 	IsRead            bool       `json:"isRead" db:"is_read"`
 	ReadAt            *time.Time `json:"readAt" db:"read_at"`
+	UnreadCount       int        `json:"unreadCount" db:"unread_count"`
+	UpdatedAt         time.Time  `json:"updatedAt" db:"updated_at"`
 	CreatedAt         time.Time  `json:"createdAt" db:"created_at"`
 }
 
@@ -431,4 +467,24 @@ type InstantJobApplication struct {
 	Location    string    `json:"location" db:"location"`
 	CompanyName string    `json:"companyName" db:"company_name"`
 	CreatedAt   time.Time `json:"createdAt" db:"created_at"`
+}
+
+// ================ WORKER RESUME ================
+
+// WorkerResume stores resume file metadata for a worker.
+// Binary data is never stored in DB — only file path/URL and metadata.
+// Ownership is established via worker_id (FK → workers.id).
+type WorkerResume struct {
+	ID           string     `json:"id" db:"id"`
+	WorkerID     string     `json:"workerId" db:"worker_id"`
+	FileURL      string     `json:"fileUrl" db:"file_url"`
+	OriginalName string     `json:"originalName" db:"original_name"`
+	StoredName   string     `json:"storedName" db:"stored_name"`
+	MimeType     string     `json:"mimeType" db:"mime_type"`
+	FileSize     int64      `json:"fileSize" db:"file_size"`
+	IsActive     bool       `json:"isActive" db:"is_active"`
+	UploadedAt   time.Time  `json:"uploadedAt" db:"uploaded_at"`
+	CreatedAt    time.Time  `json:"createdAt" db:"created_at"`
+	UpdatedAt    time.Time  `json:"updatedAt" db:"updated_at"`
+	DeletedAt    *time.Time `json:"deletedAt,omitempty" db:"deleted_at"`
 }

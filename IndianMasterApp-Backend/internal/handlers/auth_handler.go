@@ -41,7 +41,7 @@ func (h *AuthHandler) SendOTP(c *gin.Context) {
 			dto.TooManyRequestsResponse(c, "Too many OTP requests. Please wait before trying again.")
 			return
 		}
-		dto.InternalServerErrorResponse(c, "Failed to send OTP", err.Error())
+		internalError(c, "Failed to send OTP", err)
 		return
 	}
 
@@ -75,7 +75,7 @@ func (h *AuthHandler) VerifyOTP(c *gin.Context) {
 		case "OTP expired or invalid":
 			dto.UnauthorizedResponse(c, "OTP has expired or is invalid. Please request a new one.")
 		default:
-			dto.InternalServerErrorResponse(c, "Authentication failed", err.Error())
+			internalError(c, "Authentication failed", err)
 		}
 		return
 	}

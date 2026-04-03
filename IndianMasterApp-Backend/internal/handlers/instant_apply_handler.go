@@ -46,7 +46,7 @@ func (h *InstantApplyHandler) Submit(c *gin.Context) {
 
 	result, err := h.service.Submit(c.Request.Context(), &req, userID)
 	if err != nil {
-		dto.InternalServerErrorResponse(c, "Failed to submit application", gin.H{"error": err.Error()})
+		internalError(c, "Failed to submit application", err)
 		return
 	}
 

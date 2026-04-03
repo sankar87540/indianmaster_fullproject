@@ -8,6 +8,7 @@ import (
 	"myapp/internal/dto"
 	"myapp/internal/middleware"
 	"myapp/internal/services"
+	"myapp/internal/wschat"
 )
 
 // ============================================================================
@@ -438,21 +439,33 @@ func (h *ApplicationHandler) GetApplicationsByWorker(c *gin.Context) {
 
 type ChatHandler struct {
 	service *services.ChatService
+	hub     *wschat.Hub // nil when WebSocket is not configured; broadcasts are skipped
 }
 
 func NewChatHandler(service *services.ChatService) *ChatHandler {
 	return &ChatHandler{service: service}
 }
 
+// NewChatHandlerWithHub creates a ChatHandler that broadcasts real-time events via hub.
+func NewChatHandlerWithHub(service *services.ChatService, hub *wschat.Hub) *ChatHandler {
+	return &ChatHandler{service: service, hub: hub}
+}
+
 // GetOrCreateThread godoc
-// @Summary Get or Create Chat Thread
-// @Description Get an existing chat thread or create a new one between worker and hirer
+// @Summary Open or retrieve a chat conversation
+// @Description Creates or retrieves a conversation between the authenticated user and another user.
+//
+//	The caller's role is determined from their JWT token:
+//	  - If HIRER: caller is the hirer, otherUserId must be a WORKER.
+//	  - If WORKER: caller is the worker, otherUserId must be a HIRER.
+//
 // @Tags Chat
 // @Accept json
 // @Produce json
-// @Param request body dto.CreateChatThreadRequest true "Chat thread details"
+// @Param request body dto.CreateChatThreadRequest true "Other party's user ID and optional job ID"
 // @Success 200 {object} dto.APIResponse "Chat thread retrieved or created successfully"
 // @Failure 400 {object} dto.APIResponse "Invalid request body"
+// @Failure 401 {object} dto.APIResponse "Unauthorized"
 // @Failure 500 {object} dto.APIResponse "Failed to create chat thread"
 // @Router /chat/threads [post]
 // @Security BearerAuth
@@ -463,9 +476,30 @@ func (h *ChatHandler) GetOrCreateThread(c *gin.Context) {
 		return
 	}
 
-	thread, err := h.service.GetOrCreateChatThread(c.Request.Context(), req.WorkerID, req.HirerID, req.JobID)
+	callerID, err := middleware.GetUserIDFromContext(c)
 	if err != nil {
-		dto.InternalServerErrorResponse(c, "Failed to create chat thread", gin.H{"error": err.Error()})
+		dto.UnauthorizedResponse(c, "Unauthorized: user not found in context")
+		return
+	}
+
+	callerRole, _ := middleware.GetRoleFromContext(c)
+
+	var workerID, hirerID string
+	switch callerRole {
+	case "HIRER":
+		hirerID = callerID
+		workerID = req.OtherUserID
+	case "WORKER":
+		workerID = callerID
+		hirerID = req.OtherUserID
+	default:
+		dto.ForbiddenResponse(c, "Only workers and hirers can open chat threads")
+		return
+	}
+
+	thread, err := h.service.GetOrCreateChatThread(c.Request.Context(), workerID, hirerID, req.JobID)
+	if err != nil {
+		internalError(c, "Failed to create chat thread", err)
 		return
 	}
 
@@ -480,6 +514,8 @@ func (h *ChatHandler) GetOrCreateThread(c *gin.Context) {
 // @Param thread_id path string true "Chat thread ID"
 // @Success 200 {object} dto.APIResponse "Messages marked as read"
 // @Failure 401 {object} dto.APIResponse "Unauthorized"
+// @Failure 403 {object} dto.APIResponse "Forbidden - not a participant in this thread"
+// @Failure 404 {object} dto.APIResponse "Thread not found"
 // @Failure 500 {object} dto.APIResponse "Failed to mark messages as read"
 // @Router /chat/threads/{thread_id}/read [patch]
 // @Security BearerAuth
@@ -491,9 +527,37 @@ func (h *ChatHandler) MarkThreadRead(c *gin.Context) {
 	}
 
 	threadID := c.Param("thread_id")
-	if err := h.service.MarkThreadAsRead(c.Request.Context(), threadID, userID); err != nil {
-		dto.InternalServerErrorResponse(c, "Failed to mark messages as read", gin.H{"error": err.Error()})
+
+	// Security: verify the caller is a participant before mutating read state.
+	// This fetch is also reused for the WebSocket broadcast below, avoiding a
+	// second round-trip and eliminating the nil-dereference risk of fetching
+	// again after the mark-as-read call.
+	thread, err := h.service.GetThreadByID(c.Request.Context(), threadID)
+	if err != nil {
+		dto.NotFoundResponse(c, "Chat thread not found")
 		return
+	}
+	if thread.WorkerID != userID && thread.HirerID != userID {
+		dto.ForbiddenResponse(c, "You are not a participant in this conversation")
+		return
+	}
+
+	if err := h.service.MarkThreadAsRead(c.Request.Context(), threadID, userID); err != nil {
+		internalError(c, "Failed to mark messages as read", err)
+		return
+	}
+
+	// Broadcast message_read to the other participant so their sent-message ticks
+	// update to the blue "read" state in real time (fire-and-forget).
+	if h.hub != nil {
+		otherID := thread.HirerID
+		if userID == thread.HirerID {
+			otherID = thread.WorkerID
+		}
+		h.hub.BroadcastToUser(otherID, wschat.OutboundMsg{
+			Type:     "message_read",
+			ThreadID: threadID,
+		})
 	}
 
 	dto.OKResponse(c, "Messages marked as read", nil)
@@ -525,7 +589,7 @@ func (h *ChatHandler) GetMyThreads(c *gin.Context) {
 
 	threads, total, err := h.service.GetMyThreads(c.Request.Context(), userID, archived, page, limit)
 	if err != nil {
-		dto.InternalServerErrorResponse(c, "Failed to fetch chat threads", gin.H{"error": err.Error()})
+		internalError(c, "Failed to fetch chat threads", err)
 		return
 	}
 
@@ -534,7 +598,7 @@ func (h *ChatHandler) GetMyThreads(c *gin.Context) {
 
 // SendMessage godoc
 // @Summary Send Chat Message
-// @Description Send a message in a chat thread
+// @Description Send a message in a chat thread. The sender must be a participant of the thread.
 // @Tags Chat
 // @Accept json
 // @Produce json
@@ -543,6 +607,7 @@ func (h *ChatHandler) GetMyThreads(c *gin.Context) {
 // @Success 201 {object} dto.APIResponse "Message sent successfully"
 // @Failure 400 {object} dto.APIResponse "Invalid request body"
 // @Failure 401 {object} dto.APIResponse "Unauthorized - user not found in context"
+// @Failure 403 {object} dto.APIResponse "Forbidden - not a participant in this thread"
 // @Failure 500 {object} dto.APIResponse "Failed to send message"
 // @Router /chat/threads/{thread_id}/messages [post]
 // @Security BearerAuth
@@ -560,10 +625,34 @@ func (h *ChatHandler) SendMessage(c *gin.Context) {
 		return
 	}
 
+	// Security: verify the sender is an actual participant of this thread.
+	thread, err := h.service.GetThreadByID(c.Request.Context(), threadID)
+	if err != nil {
+		dto.NotFoundResponse(c, "Chat thread not found")
+		return
+	}
+	if thread.WorkerID != senderID && thread.HirerID != senderID {
+		dto.ForbiddenResponse(c, "You are not a participant in this conversation")
+		return
+	}
+
 	message, err := h.service.SendMessage(c.Request.Context(), threadID, senderID, &req)
 	if err != nil {
-		dto.InternalServerErrorResponse(c, "Failed to send message", gin.H{"error": err.Error()})
+		internalError(c, "Failed to send message", err)
 		return
+	}
+
+	// Broadcast new_message to the other participant via WebSocket (fire-and-forget).
+	if h.hub != nil {
+		receiverID := thread.HirerID
+		if senderID == thread.HirerID {
+			receiverID = thread.WorkerID
+		}
+		h.hub.BroadcastToUser(receiverID, wschat.OutboundMsg{
+			Type:     "new_message",
+			ThreadID: threadID,
+			Message:  message,
+		})
 	}
 
 	dto.CreatedResponse(c, "Message sent successfully", message)
@@ -571,29 +660,88 @@ func (h *ChatHandler) SendMessage(c *gin.Context) {
 
 // GetMessages godoc
 // @Summary Get Chat Messages
-// @Description Retrieve paginated messages from a chat thread
+// @Description Retrieve paginated messages from a chat thread. The requester must be a participant.
 // @Tags Chat
 // @Accept json
 // @Produce json
 // @Param thread_id path string true "Chat thread ID"
 // @Param page query int false "Page number" default(1)
-// @Param limit query int false "Items per page" default(20)
+// @Param limit query int false "Items per page" default(50)
 // @Success 200 {object} dto.APIResponse "Messages retrieved successfully"
+// @Failure 401 {object} dto.APIResponse "Unauthorized"
+// @Failure 403 {object} dto.APIResponse "Forbidden - not a participant in this thread"
+// @Failure 404 {object} dto.APIResponse "Thread not found"
 // @Failure 500 {object} dto.APIResponse "Failed to fetch messages"
 // @Router /chat/threads/{thread_id}/messages [get]
 // @Security BearerAuth
 func (h *ChatHandler) GetMessages(c *gin.Context) {
 	threadID := c.Param("thread_id")
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
 
-	messages, total, err := h.service.GetChatMessages(c.Request.Context(), threadID, page, limit)
+	requesterID, err := middleware.GetUserIDFromContext(c)
 	if err != nil {
-		dto.InternalServerErrorResponse(c, "Failed to fetch messages", gin.H{"error": err.Error()})
+		dto.UnauthorizedResponse(c, "Unauthorized: user not found in context")
+		return
+	}
+
+	// Security: verify the requester is a participant before returning messages.
+	thread, err := h.service.GetThreadByID(c.Request.Context(), threadID)
+	if err != nil {
+		dto.NotFoundResponse(c, "Chat thread not found")
+		return
+	}
+	if thread.WorkerID != requesterID && thread.HirerID != requesterID {
+		dto.ForbiddenResponse(c, "You are not a participant in this conversation")
+		return
+	}
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+
+	messages, total, err := h.service.GetChatMessages(c.Request.Context(), threadID, requesterID, page, limit)
+	if err != nil {
+		internalError(c, "Failed to fetch messages", err)
 		return
 	}
 
 	dto.PaginatedSuccessResponse(c, "Messages retrieved successfully", messages, total, page, limit)
+}
+
+// GetThreadPresence godoc
+// @Summary Get other participant's online/offline status
+// @Description Returns whether the other chat participant is online (last seen < 5 min ago)
+// @Tags Chat
+// @Produce json
+// @Param thread_id path string true "Chat thread ID"
+// @Success 200 {object} dto.APIResponse "Presence retrieved"
+// @Failure 401 {object} dto.APIResponse "Unauthorized"
+// @Failure 404 {object} dto.APIResponse "Thread not found"
+// @Router /chat/threads/{thread_id}/presence [get]
+// @Security BearerAuth
+func (h *ChatHandler) GetThreadPresence(c *gin.Context) {
+	callerID, err := middleware.GetUserIDFromContext(c)
+	if err != nil {
+		dto.UnauthorizedResponse(c, "Unauthorized: user not found in context")
+		return
+	}
+
+	threadID := c.Param("thread_id")
+
+	// Security: verify participation before returning the other user's online status.
+	// Use NotFoundResponse (not ForbiddenResponse) so a probing caller cannot
+	// distinguish "thread exists but you're not in it" from "thread not found".
+	thread, err := h.service.GetThreadByID(c.Request.Context(), threadID)
+	if err != nil || (thread.WorkerID != callerID && thread.HirerID != callerID) {
+		dto.NotFoundResponse(c, "Thread not found or presence unavailable")
+		return
+	}
+
+	presence, err := h.service.GetThreadPresence(c.Request.Context(), threadID, callerID)
+	if err != nil {
+		dto.NotFoundResponse(c, "Thread not found or presence unavailable")
+		return
+	}
+
+	dto.OKResponse(c, "Presence retrieved", presence)
 }
 
 // ============================================================================
@@ -636,7 +784,7 @@ func (h *SubscriptionHandler) CreateSubscription(c *gin.Context) {
 
 	subscription, err := h.service.CreateSubscription(c.Request.Context(), userID, req.PlanName, req.Amount)
 	if err != nil {
-		dto.InternalServerErrorResponse(c, "Failed to create subscription", gin.H{"error": err.Error()})
+		internalError(c, "Failed to create subscription", err)
 		return
 	}
 
@@ -716,7 +864,7 @@ func (h *SubscriptionHandler) CheckContactLimit(c *gin.Context) {
 
 	hasAvailable, remaining, err := h.service.CheckContactLimit(c.Request.Context(), userID, planLimit)
 	if err != nil {
-		dto.InternalServerErrorResponse(c, "Failed to check contact limit", gin.H{"error": err.Error()})
+		internalError(c, "Failed to check contact limit", err)
 		return
 	}
 

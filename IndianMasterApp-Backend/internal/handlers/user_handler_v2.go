@@ -58,6 +58,17 @@ func (h *UserHandlerV2) UpdateMyProfile(c *gin.Context) {
 		return
 	}
 
+	// Sync identity fields to the worker profile so that workers.full_name /
+	// workers.email always reflect the value the user actually entered.
+	// Silently ignored when no worker profile exists (e.g. hirer accounts).
+	if req.FullName != "" || req.Email != "" {
+		workerUpdate := &dto.UpdateWorkerProfileRequest{
+			FullName: req.FullName,
+			Email:    req.Email,
+		}
+		_, _ = h.workerService.UpdateWorkerProfile(c.Request.Context(), userID, workerUpdate)
+	}
+
 	dto.OKResponse(c, "Profile updated successfully", user)
 }
 
@@ -84,7 +95,7 @@ func (h *UserHandlerV2) GetRecommendedJobs(c *gin.Context) {
 
 	recommendedJobs, err := h.workerService.GetRecommendedJobs(c.Request.Context(), workerID, pagination)
 	if err != nil {
-		dto.InternalServerErrorResponse(c, "Failed to get recommended jobs", err.Error())
+		internalError(c, "Failed to get recommended jobs", err)
 		return
 	}
 

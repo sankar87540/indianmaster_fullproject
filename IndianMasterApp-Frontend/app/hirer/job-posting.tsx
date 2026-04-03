@@ -1,6 +1,7 @@
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, useWindowDimensions, Platform, Alert, TextInput, Keyboard, KeyboardAvoidingView, Modal } from 'react-native';
 import { useState, useRef, useEffect } from 'react';
 import { router, useLocalSearchParams } from 'expo-router';
+import { createHirerJob } from '@/services/workerService';
 import { ChefHat, Utensils, Wrench, User, SprayCan, Bike, ArrowRight, Store, Briefcase, Search, CheckCircle } from 'lucide-react-native';
 import { MaterialCommunityIcons, Feather, Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -10,6 +11,7 @@ import SalarySlider from '@/components/SalarySlider';
 import Slider from '@react-native-community/slider';
 import ProgressIndicator from '@/components/ProgressIndicator';
 import { COLORS, SIZES, SPACING, SHADOWS } from '@/constants/theme';
+import { INDIAN_STATES, getCitiesForState } from '@/constants/indianStateCities';
 import { useTranslation } from 'react-i18next';
 import { StatusBar } from 'expo-status-bar';
 import FadeInView from '@/components/FadeInView';
@@ -43,22 +45,28 @@ export default function JobPostingScreen() {
   const [expMin, setExpMin] = useState('');
   const [salaryMin, setSalaryMin] = useState('');
   const [salaryMax, setSalaryMax] = useState('');
-  const [vacancies, setVacancies] = useState('');
+  const [maleVacancies, setMaleVacancies] = useState('');
+  const [femaleVacancies, setFemaleVacancies] = useState('');
+  const [othersVacancies, setOthersVacancies] = useState('');
+  const [genderPreference, setGenderPreference] = useState('');
+  const [isGenderDropdownOpen, setIsGenderDropdownOpen] = useState(false);
+  const [isStateDropdownOpen, setIsStateDropdownOpen] = useState(false);
+  const [stateSearch, setStateSearch] = useState('');
+  const [isCityDropdownOpen, setIsCityDropdownOpen] = useState(false);
+  const [citySearch, setCitySearch] = useState('');
   const [leaves, setLeaves] = useState('');
   const [workingHours, setWorkingHours] = useState('');
   const [description, setDescription] = useState('');
 
   // Dropdown Open States
   const [openExpMin, setOpenExpMin] = useState(false);
-  const [openVacancies, setOpenVacancies] = useState(false);
   const [openLeaves, setOpenLeaves] = useState(false);
   const [openHours, setOpenHours] = useState(false);
 
   // Search States for Experience
   const [expMinSearch, setExpMinSearch] = useState('');
 
-  // Search States for Vacancies & Leaves
-  const [vacanciesSearch, setVacanciesSearch] = useState('');
+  // Search States for Leaves
   const [leavesSearch, setLeavesSearch] = useState('');
   const [workingHoursSearch, setWorkingHoursSearch] = useState('');
 
@@ -86,7 +94,10 @@ export default function JobPostingScreen() {
           if (data.expMin) setExpMin(data.expMin);
           if (data.salaryMin) setSalaryMin(data.salaryMin);
           if (data.salaryMax) setSalaryMax(data.salaryMax);
-          if (data.vacancies) setVacancies(data.vacancies);
+          if (data.maleVacancies) setMaleVacancies(data.maleVacancies);
+          if (data.femaleVacancies) setFemaleVacancies(data.femaleVacancies);
+          if (data.othersVacancies) setOthersVacancies(data.othersVacancies);
+          if (data.genderPreference) setGenderPreference(data.genderPreference);
           if (data.leaves) setLeaves(data.leaves);
           if (data.workingHours) setWorkingHours(data.workingHours);
           if (data.description) setDescription(data.description);
@@ -112,7 +123,10 @@ export default function JobPostingScreen() {
           expMin,
           salaryMin,
           salaryMax,
-          vacancies,
+          maleVacancies,
+          femaleVacancies,
+          othersVacancies,
+          genderPreference,
           leaves,
           workingHours,
           description,
@@ -126,7 +140,7 @@ export default function JobPostingScreen() {
     saveFormData();
   }, [
     workType, availability, selectedLanguages, city, state,
-    locality, expMin, salaryMin, salaryMax, vacancies, leaves,
+    locality, expMin, salaryMin, salaryMax, maleVacancies, femaleVacancies, othersVacancies, genderPreference, leaves,
     workingHours, description, benefits
   ]);
 
@@ -1752,7 +1766,7 @@ export default function JobPostingScreen() {
     if (locality.trim()) count++;
     if (expMin) count++;
     if (salaryMin && salaryMax) count++;
-    if (vacancies) count++;
+    if (maleVacancies || femaleVacancies || othersVacancies) count++;
     if (leaves) count++;
     if (workingHours) count++;
     if (selectedLanguages.length > 0) count++;
@@ -1786,7 +1800,8 @@ export default function JobPostingScreen() {
 
     if (!expMin) { newErrors.experience = t('validation.required'); isValid = false; }
     if (!salaryMin || !salaryMax) { newErrors.salary = t('validation.required'); isValid = false; }
-    if (vacancies === '') { newErrors.vacancies = t('validation.required'); isValid = false; }
+    const totalVacancies = (parseInt(maleVacancies || '0', 10) || 0) + (parseInt(femaleVacancies || '0', 10) || 0) + (parseInt(othersVacancies || '0', 10) || 0);
+    if (totalVacancies < 1) { newErrors.vacancies = t('validation.required') || 'Enter at least 1 vacancy'; isValid = false; }
     if (leaves === '') { newErrors.leaves = t('validation.required'); isValid = false; }
     if (workingHours === '') { newErrors.workingHours = t('validation.required'); isValid = false; }
 
@@ -1794,16 +1809,48 @@ export default function JobPostingScreen() {
     return isValid;
   };
 
-  const handleNext = () => {
-    if (validate()) {
+  const handleNext = async () => {
+    if (!validate()) return;
+    try {
+      await createHirerJob({
+        categories: selectedJobCategories,
+        roles: selectedRoles,
+        workType,
+        availability,
+        preferredLanguages: selectedLanguages,
+        city: city.trim(),
+        state: state.trim(),
+        locality: locality.trim(),
+        experienceMin: expMin ? parseInt(expMin, 10) : 0,
+        salaryMinAmount: salaryMin ? parseFloat(salaryMin) : 0,
+        salaryMaxAmount: salaryMax ? parseFloat(salaryMax) : 0,
+        maleVacancies: parseInt(maleVacancies || '0', 10),
+        femaleVacancies: parseInt(femaleVacancies || '0', 10),
+        othersVacancies: parseInt(othersVacancies || '0', 10),
+        vacancies: (parseInt(maleVacancies || '0', 10)) + (parseInt(femaleVacancies || '0', 10)) + (parseInt(othersVacancies || '0', 10)),
+        genderPreference: genderPreference || undefined,
+        weeklyLeaves: leaves ? parseInt(leaves, 10) : 0,
+        workingHours: workingHours ? parseInt(workingHours, 10) : undefined,
+        description: description.trim() || undefined,
+        benefits,
+      });
       router.push('/hirer/job-success');
+    } catch (e: any) {
+      const msg = e?.message || 'Failed to post job. Please try again.';
+      Alert.alert(t('error') || 'Error', msg);
     }
   };
 
   const experienceRange = Array.from({ length: 50 }, (_, i) => i.toString());
-  const vacanciesRange = Array.from({ length: 100 }, (_, i) => (i + 1).toString()); // 1 to 100
   const leavesRange = Array.from({ length: 10 }, (_, i) => i.toString()); // 0 to 9
   const workingHoursRange = Array.from({ length: 24 }, (_, i) => (i + 1).toString()); // 1 to 24
+  const genderOptions = ['Male', 'Female', 'Others', 'All'];
+  const genderAccentColor: Record<string, string> = {
+    Male: '#2196F3',
+    Female: '#E91E8C',
+    Others: '#9C27B0',
+    All: COLORS.primary,
+  };
 
   const benefitOptions = [
     { id: 'Free Food', label: t('freeFood') || 'Free\nFood', icon: 'food-fork-drink' },
@@ -1926,27 +1973,75 @@ export default function JobPostingScreen() {
                 {errors.role && <Text style={styles.vibrantError}>{errors.role}</Text>}
               </View>
 
-              {/* Vacancies */}
+              {/* Gender Preference */}
               <View style={styles.vibrantInputRow}>
-                <Text style={styles.modernLabel}>{t('vacancies')} <Text style={styles.required}>*</Text></Text>
+                <View style={styles.labelRowWithBadge}>
+                  <Text style={[styles.modernLabel, { flex: 1 }]}>{t('genderPreference') || 'Gender Preference'}</Text>
+                  <View style={styles.vibrantBadge}><Text style={styles.vibrantBadgeText}>{t('optional') || 'Optional'}</Text></View>
+                </View>
                 <TouchableOpacity
-                  style={[styles.vibrantSelectBox, { minHeight: 55 }, errors.vacancies && !vacancies && styles.inputError]}
-                  onPress={() => setOpenVacancies(true)}
+                  style={[styles.vibrantSelectBox, { minHeight: 55 }]}
+                  onPress={() => setIsGenderDropdownOpen(true)}
                 >
                   <View style={styles.vibrantSelectLeft}>
                     <View style={styles.vibrantIconCircle}>
-                      <User size={20} color={COLORS.primary} />
+                      <Feather name="users" size={20} color={COLORS.primary} />
                     </View>
-                    <Text style={[styles.vibrantSelectText, !vacancies && styles.placeholderText]}>
-                      {vacancies ? `${vacancies} ${t('positions')}` : t('choosePositions')}
+                    <Text style={[styles.vibrantSelectText, !genderPreference && styles.placeholderText]}>
+                      {genderPreference || (t('selectGender') || 'Select Gender')}
                     </Text>
                   </View>
                   <Ionicons name="chevron-forward-circle" size={28} color={COLORS.primary} />
                 </TouchableOpacity>
-                {errors.vacancies && <Text style={styles.vibrantError}>{errors.vacancies}</Text>}
               </View>
 
-
+              {/* No. of Vacancies (dynamic based on gender preference) */}
+              <View style={styles.vibrantInputRow}>
+                <Text style={styles.modernLabel}>{t('vacancies') || 'No. of Vacancies'} <Text style={styles.required}>*</Text></Text>
+                {errors.vacancies && <Text style={styles.vibrantError}>{errors.vacancies}</Text>}
+                {(() => {
+                  const accentColor = genderPreference ? (genderAccentColor[genderPreference] || COLORS.primary) : COLORS.primary;
+                  const showMale = !genderPreference || genderPreference === 'Male' || genderPreference === 'All';
+                  const showFemale = !genderPreference || genderPreference === 'Female' || genderPreference === 'All';
+                  const showOthers = !genderPreference || genderPreference === 'Others' || genderPreference === 'All';
+                  const fields: { label: string; value: string; setter: (v: string) => void }[] = [];
+                  if (showMale) fields.push({ label: t('male') || 'Male', value: maleVacancies, setter: setMaleVacancies });
+                  if (showFemale) fields.push({ label: t('female') || 'Female', value: femaleVacancies, setter: setFemaleVacancies });
+                  if (showOthers) fields.push({ label: t('others') || 'Others', value: othersVacancies, setter: setOthersVacancies });
+                  const totalShown = fields.reduce((sum, f) => sum + (parseInt(f.value || '0', 10) || 0), 0);
+                  return (
+                    <>
+                      <View style={{ flexDirection: 'row', gap: 12 }}>
+                        {fields.map((field) => (
+                          <View key={field.label} style={{ flex: 1 }}>
+                            <Text style={[styles.modernLabel, { fontSize: 13, marginBottom: 6, color: accentColor }]}>{field.label}</Text>
+                            <View style={[styles.vibrantInputBox, errors.vacancies && styles.inputError, { borderColor: accentColor }]}>
+                              <Feather name="user" size={18} color={accentColor} />
+                              <TextInput
+                                style={styles.modernTextInput}
+                                keyboardType="numeric"
+                                placeholder="0"
+                                placeholderTextColor={COLORS.textLight}
+                                value={field.value}
+                                onChangeText={(v) => {
+                                  field.setter(v.replace(/[^0-9]/g, ''));
+                                  if (errors.vacancies) setErrors({ ...errors, vacancies: '' });
+                                }}
+                                maxLength={3}
+                              />
+                            </View>
+                          </View>
+                        ))}
+                      </View>
+                      {totalShown > 0 && (
+                        <Text style={{ color: accentColor, fontSize: 12, marginTop: 6 }}>
+                          {t('totalVacancies') || 'Total'}: {totalShown} {t('positions') || 'positions'}
+                        </Text>
+                      )}
+                    </>
+                  );
+                })()}
+              </View>
 
               {/* Experience */}
               <View style={styles.vibrantInputRow}>
@@ -2147,12 +2242,13 @@ export default function JobPostingScreen() {
 
               <View style={styles.vibrantInputRow}>
                 <Text style={styles.modernLabel}>{t('address') || 'Address'} <Text style={styles.required}>*</Text></Text>
-                <View style={[styles.vibrantInputBox, errors.locality && styles.inputError]}>
+                <View style={[styles.vibrantInputBox, { borderColor: '#CBD5E1', minHeight: 90, alignItems: 'flex-start', paddingVertical: 14 }, errors.locality && styles.inputError]}>
                   <TextInput
-                    style={[styles.modernTextInput, { marginLeft: 0 }]}
+                    style={[styles.modernTextInput, { marginLeft: 0, textAlignVertical: 'top' }]}
                     placeholder={t('addressPlaceholder') || "Enter full address"}
                     placeholderTextColor={COLORS.textLight}
                     value={locality}
+                    multiline
                     onChangeText={(text) => {
                       setLocality(text);
                       if (text && errors.locality) setErrors({ ...errors, locality: '' });
@@ -2163,40 +2259,41 @@ export default function JobPostingScreen() {
               </View>
 
               <View style={styles.vibrantInputRow}>
-                <View style={{ flexDirection: 'row', gap: 12 }}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.modernLabel}>{t('city')} <Text style={styles.required}>*</Text></Text>
-                    <View style={[styles.vibrantInputBox, errors.city && styles.inputError, { minHeight: 50 }]}>
-                      <TextInput
-                        style={styles.modernTextInput}
-                        placeholder={t('cityPlaceholder') || "e.g. Salem"}
-                        placeholderTextColor={COLORS.textLight}
-                        value={city}
-                        onChangeText={(text) => {
-                          setCity(text);
-                          if (text && errors.city) setErrors({ ...errors, city: '' });
-                        }}
-                      />
-                    </View>
-                    {errors.city && <Text style={styles.vibrantError}>{errors.city}</Text>}
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.modernLabel}>{t('state')} <Text style={styles.required}>*</Text></Text>
-                    <View style={[styles.vibrantInputBox, errors.state && styles.inputError, { minHeight: 50 }]}>
-                      <TextInput
-                        style={styles.modernTextInput}
-                        placeholder={t('statePlaceholder') || "e.g. Tamil Nadu"}
-                        placeholderTextColor={COLORS.textLight}
-                        value={state}
-                        onChangeText={(text) => {
-                          setState(text);
-                          if (text && errors.state) setErrors({ ...errors, state: '' });
-                        }}
-                      />
-                    </View>
-                    {errors.state && <Text style={styles.vibrantError}>{errors.state}</Text>}
-                  </View>
-                </View>
+                <Text style={styles.modernLabel}>{t('city')} <Text style={styles.required}>*</Text></Text>
+                <TouchableOpacity
+                  style={[
+                    styles.vibrantSelectBox,
+                    errors.city && styles.inputError,
+                    { minHeight: 50, opacity: state ? 1 : 0.5 },
+                  ]}
+                  onPress={() => {
+                    if (!state) return;
+                    setCitySearch('');
+                    setIsCityDropdownOpen(true);
+                  }}
+                  activeOpacity={state ? 0.8 : 1}
+                >
+                  <Text style={[styles.modernTextInput, { flex: 1, color: city ? COLORS.text : COLORS.textLight }]} numberOfLines={1}>
+                    {city || (state ? (t('cityPlaceholder') || 'Select City') : (t('selectStateFirst') || 'Select State first'))}
+                  </Text>
+                  <Feather name="chevron-down" size={18} color={COLORS.textLight} />
+                </TouchableOpacity>
+                {errors.city && <Text style={styles.vibrantError}>{errors.city}</Text>}
+              </View>
+
+              <View style={styles.vibrantInputRow}>
+                <Text style={styles.modernLabel}>{t('state')} <Text style={styles.required}>*</Text></Text>
+                <TouchableOpacity
+                  style={[styles.vibrantSelectBox, errors.state && styles.inputError, { minHeight: 50 }]}
+                  onPress={() => { setStateSearch(''); setIsStateDropdownOpen(true); }}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.modernTextInput, { flex: 1, color: state ? COLORS.text : COLORS.textLight }]} numberOfLines={1}>
+                    {state || (t('statePlaceholder') || 'Select State')}
+                  </Text>
+                  <Feather name="chevron-down" size={18} color={COLORS.textLight} />
+                </TouchableOpacity>
+                {errors.state && <Text style={styles.vibrantError}>{errors.state}</Text>}
               </View>
 
               <View style={styles.vibrantInputRow}>
@@ -2402,7 +2499,7 @@ export default function JobPostingScreen() {
             </View>
 
             <ScrollView contentContainerStyle={styles.modalScrollContent} showsVerticalScrollIndicator={false}>
-              {[t('morningShift'), t('eveningShift'), t('nightShift'), t('weekends'), t('partTime'), t('flexible'), t('fullTime')].map((shift) => {
+              {[t('fullTime'), t('morningShift'), t('eveningShift'), t('nightShift'), t('weekends'), t('partTime'), t('flexible')].map((shift) => {
                 const isSelected = availability.includes(shift);
                 return (
                   <TouchableOpacity
@@ -2644,35 +2741,34 @@ export default function JobPostingScreen() {
         </View>
       </Modal>
 
-      {/* Vacancies Modal */}
+      {/* Gender Dropdown Modal */}
       <Modal
-        visible={openVacancies}
+        visible={isGenderDropdownOpen}
         animationType="slide"
         transparent={true}
-        onRequestClose={() => setOpenVacancies(false)}
+        onRequestClose={() => setIsGenderDropdownOpen(false)}
       >
         <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { height: '60%' }]}>
+          <View style={[styles.modalContent, { height: 'auto' }]}>
             <View style={styles.modalHeader}>
               <View>
-                <Text style={styles.modalTitle}>{t('vacancies')}</Text>
-                <Text style={styles.modalSubtitle}>{vacancies ? t('oneSelected') : t('noneSelected')}</Text>
+                <Text style={styles.modalTitle}>{t('genderPreference') || 'Gender Preference'}</Text>
+                <Text style={styles.modalSubtitle}>{genderPreference || (t('noneSelected') || 'None selected')}</Text>
               </View>
-              <TouchableOpacity onPress={() => setOpenVacancies(false)} style={styles.closeButton}>
+              <TouchableOpacity onPress={() => setIsGenderDropdownOpen(false)} style={styles.closeButton}>
                 <Feather name="x" size={24} color={COLORS.secondary} />
               </TouchableOpacity>
             </View>
-            <ScrollView contentContainerStyle={styles.modalScrollContent} showsVerticalScrollIndicator={false}>
-              {vacanciesRange.map((num) => {
-                const isSelected = vacancies === num;
+            <View style={{ paddingBottom: 20 }}>
+              {genderOptions.map((option) => {
+                const isSelected = genderPreference === option;
                 return (
                   <TouchableOpacity
-                    key={num}
+                    key={option}
                     style={[styles.modalItem, isSelected && styles.modalItemSelected]}
                     onPress={() => {
-                      setVacancies(num);
-                      setOpenVacancies(false);
-                      if (errors.vacancies) setErrors({ ...errors, vacancies: '' });
+                      setGenderPreference(option);
+                      setIsGenderDropdownOpen(false);
                     }}
                   >
                     <View style={styles.dropdownItemContent}>
@@ -2690,12 +2786,163 @@ export default function JobPostingScreen() {
                         {isSelected && <Feather name="check" size={14} color={COLORS.white} />}
                       </View>
                       <Text style={[styles.modalItemText, isSelected && styles.modalItemTextSelected]}>
-                        {num} {t('vacancyCount')}
+                        {option}
                       </Text>
                     </View>
                   </TouchableOpacity>
                 );
               })}
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* State Dropdown Modal */}
+      <Modal
+        visible={isStateDropdownOpen}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => { setIsStateDropdownOpen(false); setStateSearch(''); }}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { height: '80%' }]}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.modalTitle}>{t('state') || 'State'}</Text>
+                <Text style={styles.modalSubtitle}>{state || (t('noneSelected') || 'None selected')}</Text>
+              </View>
+              <TouchableOpacity onPress={() => { setIsStateDropdownOpen(false); setStateSearch(''); }} style={styles.closeButton}>
+                <Feather name="x" size={24} color={COLORS.secondary} />
+              </TouchableOpacity>
+            </View>
+            <View style={styles.modalSearchContainer}>
+              <Feather name="search" size={16} color={COLORS.textLight} style={{ marginRight: 8 }} />
+              <TextInput
+                style={styles.modalSearchInput}
+                placeholder={t('searchState') || 'Search state...'}
+                placeholderTextColor={COLORS.textLight}
+                value={stateSearch}
+                onChangeText={setStateSearch}
+                autoFocus
+              />
+            </View>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {INDIAN_STATES.filter(s => s.toLowerCase().includes(stateSearch.toLowerCase())).length === 0 && (
+                <Text style={{ textAlign: 'center', color: COLORS.textLight, padding: 24 }}>
+                  {t('noStateFound') || 'No state found'}
+                </Text>
+              )}
+              {INDIAN_STATES.filter(s => s.toLowerCase().includes(stateSearch.toLowerCase())).map((stateName) => {
+                const isSelected = state === stateName;
+                return (
+                  <TouchableOpacity
+                    key={stateName}
+                    style={[styles.modalItem, isSelected && styles.modalItemSelected]}
+                    onPress={() => {
+                      setState(stateName);
+                      // Reset city if it doesn't belong to the newly selected state
+                      const newCities = getCitiesForState(stateName);
+                      if (city && !newCities.includes(city)) setCity('');
+                      if (errors.state) setErrors({ ...errors, state: '', city: '' });
+                      setIsStateDropdownOpen(false);
+                    }}
+                  >
+                    <View style={styles.dropdownItemContent}>
+                      <View style={{
+                        width: 22,
+                        height: 22,
+                        borderRadius: 11,
+                        borderWidth: 2,
+                        borderColor: isSelected ? COLORS.primary : COLORS.border,
+                        backgroundColor: isSelected ? COLORS.primary : 'transparent',
+                        marginRight: 12,
+                        alignItems: 'center',
+                        justifyContent: 'center'
+                      }}>
+                        {isSelected && <Feather name="check" size={14} color={COLORS.white} />}
+                      </View>
+                      <Text style={[styles.modalItemText, isSelected && styles.modalItemTextSelected]}>
+                        {stateName}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* City Dropdown Modal */}
+      <Modal
+        visible={isCityDropdownOpen}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => { setIsCityDropdownOpen(false); setCitySearch(''); }}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { height: '80%' }]}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.modalTitle}>{t('city') || 'City'}</Text>
+                <Text style={styles.modalSubtitle}>{state}</Text>
+              </View>
+              <TouchableOpacity onPress={() => { setIsCityDropdownOpen(false); setCitySearch(''); }} style={styles.closeButton}>
+                <Feather name="x" size={24} color={COLORS.secondary} />
+              </TouchableOpacity>
+            </View>
+            <View style={styles.modalSearchContainer}>
+              <Feather name="search" size={16} color={COLORS.textLight} style={{ marginRight: 8 }} />
+              <TextInput
+                style={styles.modalSearchInput}
+                placeholder={t('searchCity') || 'Search city...'}
+                placeholderTextColor={COLORS.textLight}
+                value={citySearch}
+                onChangeText={setCitySearch}
+                autoFocus
+              />
+            </View>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {getCitiesForState(state).filter(c => c.toLowerCase().includes(citySearch.toLowerCase())).length === 0 && (
+                <Text style={{ textAlign: 'center', color: COLORS.textLight, padding: 24 }}>
+                  {t('noCityFound') || 'No city found'}
+                </Text>
+              )}
+              {getCitiesForState(state)
+                .filter(c => c.toLowerCase().includes(citySearch.toLowerCase()))
+                .map((cityName) => {
+                  const isSelected = city === cityName;
+                  return (
+                    <TouchableOpacity
+                      key={cityName}
+                      style={[styles.modalItem, isSelected && styles.modalItemSelected]}
+                      onPress={() => {
+                        setCity(cityName);
+                        if (errors.city) setErrors({ ...errors, city: '' });
+                        setIsCityDropdownOpen(false);
+                      }}
+                    >
+                      <View style={styles.dropdownItemContent}>
+                        <View style={{
+                          width: 22,
+                          height: 22,
+                          borderRadius: 11,
+                          borderWidth: 2,
+                          borderColor: isSelected ? COLORS.primary : COLORS.border,
+                          backgroundColor: isSelected ? COLORS.primary : 'transparent',
+                          marginRight: 12,
+                          alignItems: 'center',
+                          justifyContent: 'center'
+                        }}>
+                          {isSelected && <Feather name="check" size={14} color={COLORS.white} />}
+                        </View>
+                        <Text style={[styles.modalItemText, isSelected && styles.modalItemTextSelected]}>
+                          {cityName}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
             </ScrollView>
           </View>
         </View>

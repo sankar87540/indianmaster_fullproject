@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"time"
 
 	"myapp/internal/models"
 )
@@ -35,11 +34,11 @@ func (r *notificationPostgresRepository) CreateNotification(ctx context.Context,
 		INSERT INTO notifications (
 			id, user_id, title, message, type,
 			related_entity_type, related_entity_id,
-			is_read, created_at
+			is_read, unread_count, created_at, updated_at
 		) VALUES (
 			$1, $2, $3, $4, $5,
 			$6, $7,
-			$8, $9
+			$8, 1, $9, $9
 		)`
 
 	_, err := r.executor.ExecContext(ctx, query,
@@ -55,6 +54,47 @@ func (r *notificationPostgresRepository) CreateNotification(ctx context.Context,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create notification: %w", err)
+	}
+	return nil
+}
+
+// UpsertChatNotification inserts a CHAT_MESSAGE notification or, if one already
+// exists for (user_id, type, related_entity_id), updates the existing row so that
+// each chat thread has exactly one notification entry (WhatsApp-style grouping).
+// unread_count is incremented atomically on conflict.
+func (r *notificationPostgresRepository) UpsertChatNotification(ctx context.Context, notif *models.Notification) error {
+	query := `
+		INSERT INTO notifications (
+			id, user_id, title, message, type,
+			related_entity_id,
+			is_read, unread_count, created_at, updated_at
+		) VALUES (
+			$1, $2, $3, $4, $5,
+			$6,
+			false, 1, NOW(), NOW()
+		)
+		ON CONFLICT (user_id, type, related_entity_id)
+		WHERE type = 'CHAT_MESSAGE' AND related_entity_id IS NOT NULL
+		DO UPDATE SET
+			title       = EXCLUDED.title,
+			message     = EXCLUDED.message,
+			is_read     = false,
+			unread_count = CASE
+				WHEN notifications.is_read THEN 1
+				ELSE notifications.unread_count + 1
+			END,
+			updated_at  = NOW()`
+
+	_, err := r.executor.ExecContext(ctx, query,
+		notif.ID,
+		notif.UserID,
+		notif.Title,
+		notif.Message,
+		notif.Type,
+		notif.RelatedEntityID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to upsert chat notification: %w", err)
 	}
 	return nil
 }
@@ -87,14 +127,19 @@ func (r *notificationPostgresRepository) GetNotificationsByUserID(
 		return nil, 0, fmt.Errorf("failed to count notifications: %w", err)
 	}
 
-	// Fetch rows
+	// Fetch rows ordered by updated_at DESC so that chat threads bubble up to
+	// the top each time a new message arrives. COALESCE handles rows that
+	// pre-date the updated_at column (migration 000032).
 	dataQuery := fmt.Sprintf(`
 		SELECT id, user_id, title, message, type,
 		       related_entity_type, related_entity_id,
-		       is_read, read_at, created_at
+		       is_read,
+		       COALESCE(unread_count, 1) AS unread_count,
+		       COALESCE(updated_at, created_at) AS updated_at,
+		       created_at
 		FROM notifications
 		%s
-		ORDER BY created_at DESC
+		ORDER BY COALESCE(updated_at, created_at) DESC
 		LIMIT $%d OFFSET $%d`,
 		whereClause, argIdx, argIdx+1,
 	)
@@ -118,7 +163,8 @@ func (r *notificationPostgresRepository) GetNotificationsByUserID(
 			&n.RelatedEntityType,
 			&n.RelatedEntityID,
 			&n.IsRead,
-			&n.ReadAt,
+			&n.UnreadCount,
+			&n.UpdatedAt,
 			&n.CreatedAt,
 		); err != nil {
 			return nil, 0, fmt.Errorf("failed to scan notification: %w", err)
@@ -133,14 +179,16 @@ func (r *notificationPostgresRepository) GetNotificationsByUserID(
 	return notifs, total, nil
 }
 
-// MarkNotificationAsRead marks a notification as read and sets read_at timestamp
+// MarkNotificationAsRead marks a notification as read and resets unread_count to 0.
+// This is called when the user taps a notification (e.g. opens the chat thread),
+// so the badge count clears immediately.
 func (r *notificationPostgresRepository) MarkNotificationAsRead(ctx context.Context, notifID string) error {
 	query := `
 		UPDATE notifications
-		SET is_read = true, read_at = $1
-		WHERE id = $2`
+		SET is_read = true, unread_count = 0
+		WHERE id = $1`
 
-	result, err := r.executor.ExecContext(ctx, query, time.Now(), notifID)
+	result, err := r.executor.ExecContext(ctx, query, notifID)
 	if err != nil {
 		return fmt.Errorf("failed to mark notification as read: %w", err)
 	}
